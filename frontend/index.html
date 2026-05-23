@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AIS 船舶轨迹清洗与可视化平台</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-frame">
+      <header class="app-header">
+        <div class="brand-block">
+          <div class="brand-mark">AIS</div>
+          <div>
+            <h1>AIS 船舶轨迹清洗与可视化平台</h1>
+            <p>OpenStreetMap 底图 · MVT 轨迹瓦片 · 数据清洗 · 交通流统计 · 密度热力图</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <div class="status-pill">
+            <span class="status-dot"></span>
+            <span id="statusText">读取状态中</span>
+          </div>
+          <button id="refreshBtn" class="btn ghost">刷新统计</button>
+          <button id="excelBtn" class="btn primary">导出 Excel</button>
+        </div>
+      </header>
+
+      <main class="dashboard-grid">
+        <aside class="control-rail">
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <h2>数据导入</h2>
+                <p>当前示例从本地 pkl 转换为 Parquet</p>
+              </div>
+              <span class="panel-icon">▦</span>
+            </div>
+            <button id="buildBtn" class="btn primary full">构建 Parquet</button>
+            <div class="job-line" id="jobText">待命</div>
+            <div class="mini-grid">
+              <div>
+                <span>标准字段</span>
+                <strong>9</strong>
+              </div>
+              <div>
+                <span>存储格式</span>
+                <strong>Parquet</strong>
+              </div>
+            </div>
+            <div id="fieldBadges" class="badge-wrap">
+              <span>MMSI</span><span>时间</span><span>经度</span><span>纬度</span><span>航速</span><span>航向</span><span>船型</span><span>船长</span><span>船宽</span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <h2>数据清洗</h2>
+                <p>阈值可调整，结果写入独立清洗表</p>
+              </div>
+              <span class="panel-icon">✓</span>
+            </div>
+            <div class="form-grid two">
+              <label>最大航速 <input id="cleanSpeedMaxInput" type="number" step="0.1" value="50" /></label>
+              <label>跳点速度 <input id="cleanJumpSpeedInput" type="number" step="0.1" value="50" /></label>
+              <label>最大加速度 <input id="cleanAccelInput" type="number" step="0.1" value="8" /></label>
+              <label>断点分钟 <input id="cleanGapInput" type="number" step="1" value="60" /></label>
+              <label>断点距离(nm) <input id="cleanDistanceGapInput" type="number" step="0.1" value="3" /></label>
+              <label>停留航速 <input id="cleanStopSpeedInput" type="number" step="0.1" value="0.5" /></label>
+              <label>低速航速 <input id="cleanLowSpeedInput" type="number" step="0.1" value="3" /></label>
+            </div>
+            <label class="check-row"><input id="cleanDedupeInput" type="checkbox" checked /> 去除精确重复点</label>
+            <div class="button-row">
+              <button id="runCleanBtn" class="btn primary">运行清洗</button>
+              <button id="resetCleanBtn" class="btn ghost">使用原始数据</button>
+            </div>
+            <div class="job-line" id="cleanJobText">待命</div>
+            <div class="task-progress" id="cleanProgressBox">
+              <div class="task-progress-head">
+                <span id="cleanProgressStage">等待清洗任务</span>
+                <strong id="cleanProgressValue">0%</strong>
+              </div>
+              <div class="progress-track">
+                <div class="progress-fill" id="cleanProgressFill" style="width: 0%"></div>
+              </div>
+            </div>
+            <div id="qualityPanel" class="quality-list"></div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <div>
+                <h2>联动筛选</h2>
+                <p>统计、密度图和轨迹瓦片共用条件</p>
+              </div>
+              <span class="panel-icon">⌕</span>
+            </div>
+            <div class="form-grid">
+              <label>开始时间 <input id="startInput" type="datetime-local" /></label>
+              <label>结束时间 <input id="endInput" type="datetime-local" /></label>
+            </div>
+            <div class="form-grid two">
+              <label>最小经度 <input id="lonMinInput" type="number" step="0.0001" /></label>
+              <label>最大经度 <input id="lonMaxInput" type="number" step="0.0001" /></label>
+              <label>最小纬度 <input id="latMinInput" type="number" step="0.0001" /></label>
+              <label>最大纬度 <input id="latMaxInput" type="number" step="0.0001" /></label>
+            </div>
+            <div class="form-grid two">
+              <label>船舶类型 <input id="shipTypeInput" type="number" step="1" /></label>
+              <label>MMSI <input id="mmsiFilterInput" type="text" inputmode="numeric" /></label>
+            </div>
+            <div class="button-row">
+              <button id="applyBtn" class="btn dark">应用筛选</button>
+              <button id="clearBtn" class="btn ghost">清空</button>
+            </div>
+          </section>
+        </aside>
+
+        <section class="main-workspace">
+          <section class="workspace-head">
+            <div>
+              <h2>离线 AIS 数据工作台</h2>
+              <p id="datasetMeta">等待数据集</p>
+            </div>
+            <div class="head-tabs">
+              <span>清洗</span>
+              <span>轨迹</span>
+              <span>统计</span>
+              <span>导出</span>
+            </div>
+          </section>
+
+          <section id="metrics" class="metric-grid"></section>
+          <section id="cleaningSummary" class="metric-grid compact"></section>
+
+          <section class="map-card">
+            <div class="section-head">
+              <div>
+                <h3>OpenStreetMap 船舶轨迹主视图</h3>
+                <p>底图使用 OSM 瓦片，AIS 轨迹由后端动态生成 MVT 矢量瓦片</p>
+              </div>
+              <div class="button-row tight">
+                <button id="fitMapBtn" class="btn ghost">定位数据范围</button>
+                <button id="reloadTilesBtn" class="btn ghost">刷新轨迹瓦片</button>
+              </div>
+            </div>
+            <div id="map" class="map-stage"></div>
+            <div id="mapStatus" class="map-status">地图初始化中</div>
+          </section>
+
+          <section class="analysis-grid">
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <h3>船舶活动密度</h3>
+                  <p>后端聚合后生成静态 PNG，适合报表和科研留痕</p>
+                </div>
+                <div class="inline-controls">
+                  <label>分辨率 <input id="densityBinsInput" type="number" min="50" max="1000" value="400" /></label>
+                  <button id="densityBtn" class="btn ghost">生成</button>
+                </div>
+              </div>
+              <div class="image-stage">
+                <img id="densityImage" alt="AIS 密度图" />
+              </div>
+            </article>
+
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <h3>航速分布</h3>
+                  <p>当前筛选范围内的速度直方图</p>
+                </div>
+              </div>
+              <canvas id="speedCanvas" width="760" height="360"></canvas>
+            </article>
+
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <h3>船型结构</h3>
+                  <p>按船型统计点位与船舶数量</p>
+                </div>
+              </div>
+              <canvas id="shipCanvas" width="760" height="360"></canvas>
+            </article>
+
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <h3>交通流时间序列</h3>
+                  <p>按小时、日、月聚合交通流变化</p>
+                </div>
+                <select id="grainSelect">
+                  <option value="day">日</option>
+                  <option value="hour">小时</option>
+                  <option value="month">月</option>
+                </select>
+              </div>
+              <canvas id="timeCanvas" width="1280" height="360"></canvas>
+            </article>
+
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <h3>航行状态</h3>
+                  <p>基于清洗后速度阈值识别</p>
+                </div>
+              </div>
+              <div id="navStatePanel" class="state-bars"></div>
+            </article>
+
+            <article class="surface">
+              <div class="section-head">
+                <div>
+                  <h3>报表输出</h3>
+                  <p>统计表、密度图和轨迹结果导出</p>
+                </div>
+              </div>
+              <div class="report-list">
+                <button class="report-row" id="reportExcelBtn"><span>综合统计报表</span><b>Excel</b></button>
+                <button class="report-row" id="reportDensityBtn"><span>密度热力图</span><b>PNG</b></button>
+                <button class="report-row" id="reportRefreshBtn"><span>重新计算统计</span><b>刷新</b></button>
+              </div>
+            </article>
+
+            <article class="surface wide">
+              <div class="section-head">
+                <div>
+                  <h3>单船轨迹</h3>
+                  <p>输入 MMSI 查询抽稀后的单船轨迹</p>
+                </div>
+                <div class="inline-controls">
+                  <input id="trackMmsiInput" type="text" inputmode="numeric" placeholder="MMSI" />
+                  <button id="trackBtn" class="btn ghost">查询</button>
+                </div>
+              </div>
+              <canvas id="trackCanvas" width="1280" height="420"></canvas>
+              <div id="trackMeta" class="muted"></div>
+            </article>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

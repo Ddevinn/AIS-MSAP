@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+
+data/cache/
+data/exports/
+data/processed/*.parquet
+data/processed/*.duckdb
+
+*.pkl
+*.pickle
+
+*.log

@@ -1,0 +1,11 @@
+pandas
+duckdb
+pyarrow
+fastapi
+uvicorn
+openpyxl
+python-multipart
+matplotlib
+numpy
+mapbox-vector-tile
+shapely
