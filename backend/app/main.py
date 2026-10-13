@@ -49,6 +49,7 @@ from backend.app.services.dataset import (
     unregister_dataset,
 )
 from backend.app.services.exporter import export_excel
+from backend.app.services.directions import direction_histograms, direction_time_series, validate_direction_bin_width
 from backend.app.services.plots import density_png
 from backend.app.services.query import QueryFilters, normalize_behavior, normalize_spatial_filter
 from backend.app.services.raster_tracks import (
@@ -407,6 +408,25 @@ def api_length_histogram(bins: int = 30, bin_width: float | None = Query(default
     return _call(length_distribution, bins=bins, bin_width=bin_width, filters=filters)
 
 
+@app.get("/api/direction-histograms")
+def api_direction_histograms(bin_width: int = 15, filters: QueryFilters = Depends(parse_filters)) -> dict[str, object]:
+    try:
+        validate_direction_bin_width(bin_width)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _call(direction_histograms, bin_width=bin_width, filters=filters)
+
+
+@app.get("/api/direction-time-series")
+def api_direction_time_series(
+    max_points: int = Query(default=5000, ge=2, le=20000),
+    filters: QueryFilters = Depends(parse_filters),
+) -> dict[str, object]:
+    if filters.mmsi is None:
+        raise HTTPException(status_code=422, detail="请先输入船舶编号（MMSI）。")
+    return _call(direction_time_series, filters=filters, max_points=max_points)
+
+
 @app.get("/api/ship-types")
 def api_ship_types(limit: int = 20, filters: QueryFilters = Depends(parse_filters)) -> list[dict[str, object]]:
     return _call(ship_type_distribution, limit=limit, filters=filters)
@@ -473,9 +493,13 @@ def api_track(mmsi: int, max_points: int = 50000) -> dict[str, object]:
 
 
 @app.get("/api/export/excel")
-def api_export_excel(filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
+def api_export_excel(direction_bin_width: int = 15, filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
     try:
-        path = export_excel(filters=filters)
+        validate_direction_bin_width(direction_bin_width)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        path = export_excel(filters=filters, direction_bin_width=direction_bin_width)
         return FileResponse(path, filename=Path(path).name)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

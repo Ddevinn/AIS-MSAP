@@ -6,7 +6,7 @@
     <title>AIS 船舶轨迹分析工作台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261013-orange-fullscreen-2" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261013-directions-1" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -301,6 +301,26 @@
           </section>
 
           <section class="analysis-grid">
+            <article class="chart-card" id="courseDirectionCard">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon orange"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg></span><div><span class="eyebrow">航向分析</span><h3>对地航向分布（COG）</h3></div></div><select id="directionBinWidthSelect" aria-label="对地航向分箱宽度"><option value="15" selected>15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option></select></div>
+              <p class="chart-note">船舶实际移动的方向；占比按有效航向点计算。</p>
+              <div class="direction-stats" id="courseDirectionStats" aria-live="polite"></div>
+              <p class="chart-note" id="courseDirectionStatus" role="status"></p>
+              <div class="chart-stage"><canvas id="courseDirectionCanvas" aria-label="对地航向分布直方图"></canvas></div>
+            </article>
+            <article class="chart-card" id="headingDirectionCard">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon violet"><svg class="ui-icon" aria-hidden="true"><use href="#i-ship" /></svg></span><div><span class="eyebrow">船首向分析</span><h3>船首向分布（heading）</h3></div></div><select id="headingBinWidthSelect" aria-label="船首向分箱宽度"><option value="15" selected>15°</option><option value="30">30°</option><option value="45">45°</option><option value="90">90°</option></select></div>
+              <p class="chart-note">船头指向的方向；分箱宽度与对地航向同步。</p>
+              <div class="direction-stats" id="headingDirectionStats" aria-live="polite"></div>
+              <p class="chart-note" id="headingDirectionStatus" role="status"></p>
+              <div class="chart-stage"><canvas id="headingDirectionCanvas" aria-label="船首向分布直方图"></canvas></div>
+            </article>
+            <article class="chart-card wide" id="directionTimeCard">
+              <div class="chart-head direction-time-head"><div class="chart-title"><span class="chart-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-chart" /></svg></span><div><span class="eyebrow">单船航向分析</span><h3>对地航向与船首向时间曲线</h3></div></div><div class="direction-vessel-control"><input id="directionMmsiInput" type="text" inputmode="numeric" placeholder="输入 9 位 MMSI" aria-label="时间曲线船舶编号" /><button id="applyDirectionMmsiBtn" class="btn dark" type="button">查看船舶</button></div></div>
+              <p class="chart-note">0° 为北，90° 为东，180° 为南，270° 为西。跨越 0° 或轨迹断点处断开连线。</p>
+              <p class="chart-note direction-time-status" id="directionTimeStatus" role="status">输入船舶编号后查看双曲线，并与当前时间、水域筛选联动。</p>
+              <div class="chart-stage wide"><canvas id="directionTimeCanvas" aria-label="单船对地航向和船首向时间曲线"></canvas></div>
+            </article>
             <article class="chart-card">
               <div class="chart-head"><div class="chart-title"><span class="chart-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-clock" /></svg></span><div><span class="eyebrow">统计图表</span><h3>航速分布</h3></div></div><select id="speedBinWidthSelect"><option value="0.5">0.5 kn</option><option value="1" selected>1 kn</option><option value="2">2 kn</option><option value="5">5 kn</option></select></div>
               <div class="chart-stage"><canvas id="speedCanvas"></canvas></div>
@@ -329,6 +349,6 @@
 
     <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="/static/app.js?v=20261013-orange-fullscreen-2"></script>
+    <script src="/static/app.js?v=20261013-directions-1"></script>
   </body>
 </html>

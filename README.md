@@ -220,6 +220,40 @@ Excel export, and PNG track tiles automatically read the cleaned Parquet.
 `POST /api/cleaning/reset` and the "恢复清洗前数据" button remove the current
 cleaned Parquet and cleaning manifest, then use the source Parquet.
 
+## Course and true-heading analysis
+
+The dashboard shows separate distributions for course over ground (`course`,
+COG) and true heading (`heading`). Both share the existing vessel, time, speed,
+ship-type and water-area filters. The two bin selectors stay synchronized
+(15°, 30°, 45° or 90°); statistics include valid points, missing/unavailable
+points, invalid points, dominant intervals and a circular mean. Distribution
+percentages use valid points as their denominator.
+
+Select a nine-digit MMSI to compare COG (orange) and heading (purple) on one
+time plot. This applies the vessel filter to the dashboard. Each line breaks
+at unavailable values, trajectory changes, configured time gaps and crossings
+of the 0°/360° boundary. The plot displays at most 5,000 points by default;
+breaks are calculated before limiting points. Distributions and exports use
+all matching points.
+
+Valid angles are finite values in `[0, 360)`. COG 360° and heading 511 are
+unavailable sentinels; other out-of-range or non-finite values are invalid.
+Missing heading does not remove an otherwise usable AIS row. Legacy datasets
+without heading remain supported. Circular means near cancellation are
+reported as undefined rather than as a misleading direction. Sentinel
+definitions follow the [USCG AIS report specification](https://www.navcen.uscg.gov/ais-class-a-reports).
+
+```text
+GET /api/direction-histograms?bin_width=15
+GET /api/direction-time-series?mmsi=413523230&max_points=5000
+GET /api/export/excel?direction_bin_width=15
+```
+
+The API also accepts 5°, 10° and 60° bins. Time-series limits must be between
+2 and 20,000 points. Excel retains the original six sheets and adds
+`航向统计`, `对地航向分布` and `船首向分布`, using the current filters and
+the selected bin width.
+
 ## Useful scripts
 
 ```powershell

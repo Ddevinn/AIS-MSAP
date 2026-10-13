@@ -17,6 +17,7 @@ from backend.app.services.analysis import (
     time_series,
 )
 from backend.app.services.query import QueryFilters
+from backend.app.services.directions import direction_histograms
 
 _HEADER_FILL = PatternFill("solid", fgColor="1E3A5F")
 _HEADER_FONT = Font(bold=True, color="FFFFFF")
@@ -69,7 +70,7 @@ def _autofit(ws) -> None:
         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 2, 36)
 
 
-def export_excel(filters: QueryFilters | None = None) -> Path:
+def export_excel(filters: QueryFilters | None = None, direction_bin_width: int = 15) -> Path:
     EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = EXPORT_DIR / f"ais_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
@@ -177,5 +178,38 @@ def export_excel(filters: QueryFilters | None = None) -> Path:
         ws6.cell(i, 3, round(row["percentage"], 2))
     _autofit(ws6)
 
+    directions = direction_histograms(bin_width=direction_bin_width, filters=filters)
+    overview = wb.create_sheet("航向统计")
+    overview["A1"] = "航向有效性与圆周统计"
+    overview["A1"].font = _TITLE_FONT
+    _write_header(overview, 2, ["指标", "对地航向 (COG)", "船首向 (heading)"])
+    metrics = [
+        ("字段是否提供", lambda item: "是" if item["available"] else "未提供"),
+        ("筛选点数", lambda item: directions["point_count"]),
+        ("有效点数", lambda item: item["valid_count"]),
+        ("缺失/不可用点数", lambda item: item["missing_count"]),
+        ("异常点数", lambda item: item["invalid_count"]),
+        ("缺失/异常比例 (%)", lambda item: round(item["unusable_percentage"], 2)),
+        ("圆周平均方向 (°)", lambda item: round(item["circular_mean"], 2) if item["circular_mean"] is not None else "无有效数据或方向分散"),
+        ("主要方向区间", lambda item: "、".join(f"{interval['start']}–{interval['end']}°" for interval in item["dominant_bins"]) or "无有效数据"),
+        ("分箱宽度 (°)", lambda item: directions["bin_width"]),
+    ]
+    for row, (label, value) in enumerate(metrics, 3):
+        overview.cell(row, 1, label)
+        for column, field in enumerate(("course", "heading"), 2):
+            overview.cell(row, column, value(directions[field]))
+    _autofit(overview)
+    for field, title in (("course", "对地航向分布"), ("heading", "船首向分布")):
+        sheet = wb.create_sheet(title)
+        sheet["A1"] = title
+        sheet["A1"].font = _TITLE_FONT
+        _write_header(sheet, 2, ["区间起点 (°)", "区间终点 (°)", "有效点数", "有效点占比 (%)"])
+        item = directions[field]
+        for row, (start, end, count, percentage) in enumerate(zip(
+            directions["bins"][:-1], directions["bins"][1:], item["counts"], item["percentages"]
+        ), 3):
+            for column, value in enumerate((start, end, count, round(percentage, 2)), 1):
+                sheet.cell(row, column, value)
+        _autofit(sheet)
     wb.save(path)
     return path
