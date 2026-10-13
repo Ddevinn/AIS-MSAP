@@ -144,7 +144,7 @@ pickle file. New registered datasets use `data/datasets/<dataset_id>/`. The
 
 ## PNG raster track tiles
 
-The dashboard includes a MapLibre GL JS map. The base map is loaded from OpenStreetMap. The local backend reads every matching AIS point, keeps the original track order, renders dark-blue fixed-style transparent PNG raster tiles, and caches them on disk. Cache misses are distributed across up to four worker threads, so stopping the backend cannot leave orphan Python worker processes. Track data is not sampled or downsampled, and raw coordinates are not sent to the browser:
+The dashboard includes a MapLibre GL JS map. The base map is loaded from OpenStreetMap. The local backend reads every matching AIS point, keeps the original track order, renders fixed-style transparent PNG raster tiles, and caches them on disk. The map applies a 180-degree hue rotation and increased saturation and opacity to display the tracks in high-contrast orange against the blue sea; these display changes take effect on page refresh without restarting the backend or rebuilding cached tiles. Cache misses are distributed across up to four worker threads, so stopping the backend cannot leave orphan Python worker processes. Track data is not sampled or downsampled, and raw coordinates are not sent to the browser:
 
 ```text
 /api/tiles/tracks/{z}/{x}/{y}.png

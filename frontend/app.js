@@ -119,9 +119,7 @@ window.addEventListener("DOMContentLoaded", () => {
   state.statusTimer = setInterval(pollStatus, 2500);
   document.addEventListener("fullscreenchange", () => {
     $("mapFullscreenText").textContent = document.fullscreenElement ? "退出全屏" : "全屏查看";
-    setTimeout(() => {
-      state.map?.resize();
-    }, 80);
+    requestAnimationFrame(() => state.map?.resize());
   });
 });
 
@@ -864,6 +862,9 @@ function initMap() {
   });
   state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left");
   state.map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
+  // Fullscreen and wrapping controls can resize the container without a window resize.
+  const resizeObserver = new ResizeObserver(() => state.map?.resize());
+  resizeObserver.observe($("map"));
   state.map.on("mousemove", ({ lngLat }) => {
     state.cursorLngLat = { lng: lngLat.lng, lat: lngLat.lat };
     renderMapCoordinates();
@@ -1581,7 +1582,7 @@ function refreshTrackTiles() {
   }
   const tileUrl = `${location.origin}/api/tiles/tracks/{z}/{x}/{y}.png${queryString({
     data_version: state.activeKey,
-    render_version: "behavior-v5",
+    render_version: "orange-v7",
     behavior: state.behaviorFilter,
   })}`;
   map.addSource(sourceId, {
@@ -1596,7 +1597,12 @@ function refreshTrackTiles() {
     type: "raster",
     source: sourceId,
     minzoom: 8,
-    paint: { "raster-opacity": 0.46, "raster-fade-duration": 0 },
+    paint: {
+      "raster-opacity": 0.95,
+      "raster-hue-rotate": 180,
+      "raster-saturation": 0.5,
+      "raster-fade-duration": 0,
+    },
   });
   ["marker-region-fill", "marker-route-line", "marker-section-line", "marker-region-line", "marker-point", "draft-fill", "draft-line", "draft-points"].forEach((id) => {
     if (map.getLayer(id)) map.moveLayer(id);

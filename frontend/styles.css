@@ -250,6 +250,8 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .map-coordinates:active { transform: translateY(1px); }
 .map-coordinates:focus-visible { outline: 2px solid #2f76b7; outline-offset: 2px; }
 .map-card:fullscreen {
+  display: flex;
+  flex-direction: column;
   width: 100vw;
   height: 100vh;
   padding: 14px;
@@ -258,8 +260,9 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
   border-radius: 0;
   background: var(--bg);
 }
-.map-card:fullscreen .map-workspace { height: calc(100vh - 82px); min-height: 0; }
-.map-card:fullscreen .map-pane,
+.map-card:fullscreen .map-card-head { flex: 0 0 auto; }
+.map-card:fullscreen .map-workspace { flex: 1; min-height: 0; }
+.map-card:fullscreen .map-pane { height: 100%; min-height: 0; }
 .map-card:fullscreen .map-stage { min-height: 0; }
 .map-status { padding: 7px 3px 0; color: var(--muted); font-size: 10px; }
 .maplibregl-ctrl-group { border-radius: 10px !important; box-shadow: var(--shadow-sm) !important; }
