@@ -269,6 +269,7 @@ async function uploadDataset() {
 async function pollStatus() {
   try {
     const data = await api("/api/status");
+    if (state.activeDatasetId !== data.active_dataset_id) resetFilters();
     renderDatasets(data.datasets || [], data.active_dataset_id || "");
     $("statusText").textContent = data.cleaned_dataset_ready
       ? "数据已清洗，可以查看"
@@ -276,10 +277,12 @@ async function pollStatus() {
         ? "数据已加载，可以查看"
         : "等待加载数据";
 
-    const job = data.build_job || {};
+    const job = !data.build_job?.dataset_id || data.build_job.dataset_id === data.active_dataset_id
+      ? data.build_job || {} : {};
     $("jobText").textContent = formatJob(job, job.progress || {});
 
-    const cleanJob = data.clean_job || {};
+    const cleanJob = !data.clean_job?.dataset_id || data.clean_job.dataset_id === data.active_dataset_id
+      ? data.clean_job || {} : {};
     $("cleanJobText").textContent = formatCleanJob(cleanJob, cleanJob.progress || {}, data.cleaning_manifest);
     updateCleanProgress(cleanJob, cleanJob.progress || {}, data.cleaning_manifest);
     renderCleaningSummary(data.cleaning_manifest);
@@ -306,6 +309,9 @@ async function pollStatus() {
     } else {
       state.activeDatasetId = data.active_dataset_id || "";
       state.manifest = null;
+      state.activeKey = "";
+      state.mapFitted = false;
+      clearDatasetResults();
       const selected = (data.datasets || []).find((item) => item.id === data.active_dataset_id);
       $("datasetMeta").textContent = selected ? `${selected.name}：等待加载` : "等待加载数据";
     }
@@ -394,6 +400,7 @@ async function resetCleaning() {
 }
 
 async function loadAll() {
+  if (!state.manifest) return;
   await Promise.allSettled([
     loadSummary(),
     loadSpeedHistogram(),
@@ -402,6 +409,17 @@ async function loadAll() {
     loadTimeSeries(),
     loadLengthHistogram(),
   ]);
+}
+
+function clearDatasetResults() {
+  $("metrics").innerHTML = "";
+  $("navStatePanel").innerHTML = '<div class="muted">等待加载数据</div>';
+  [speedChart, shipChart, timeChart, lengthChart].forEach((chart) => chart?.destroy());
+  speedChart = shipChart = timeChart = lengthChart = null;
+  const map = state.map;
+  if (map?.getLayer("ais-tracks-raster")) map.removeLayer("ais-tracks-raster");
+  if (map?.getSource("ais-tracks")) map.removeSource("ais-tracks");
+  $("mapStatus").textContent = "等待加载数据";
 }
 
 async function loadSummary() {
@@ -1557,6 +1575,10 @@ function refreshTrackTiles() {
   const layerId = "ais-tracks-raster";
   if (map.getLayer(layerId)) map.removeLayer(layerId);
   if (map.getSource(sourceId)) map.removeSource(sourceId);
+  if (!state.manifest) {
+    $("mapStatus").textContent = "等待加载数据";
+    return;
+  }
   const tileUrl = `${location.origin}/api/tiles/tracks/{z}/{x}/{y}.png${queryString({
     data_version: state.activeKey,
     render_version: "behavior-v5",
@@ -1647,7 +1669,7 @@ function collectCleaningConfig() {
   };
 }
 
-function clearFilters() {
+function resetFilters() {
   state.spatialFilter = null;
   state.behaviorFilter = null;
   ["startInput", "endInput", "lonMinInput", "lonMaxInput", "latMinInput", "latMaxInput", "shipTypeInput", "mmsiFilterInput", "speedMinInput", "speedMaxInput"].forEach((id) => {
@@ -1659,6 +1681,10 @@ function clearFilters() {
   $("behaviorFilterStatus").textContent = "显示全部轨迹";
   state.filters = {};
   renderMarkers();
+}
+
+function clearFilters() {
+  resetFilters();
   loadAll();
   refreshTrackTiles();
 }
