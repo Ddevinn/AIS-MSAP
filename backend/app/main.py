@@ -4,16 +4,17 @@ import asyncio
 import os
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from backend.app.config import FRONTEND_DIR
+from backend.app.config import DATA_DIR, FRONTEND_DIR
 from backend.app.services.analysis import (
     behavior_distribution,
     length_distribution,
@@ -107,6 +108,9 @@ class DatasetRegisterRequest(BaseModel):
     name: str = ""
     source_path: str
     make_active: bool = True
+    source_timezone: str = "Asia/Shanghai"
+    csv_encoding: str = "auto"
+    sheet_name: str | None = None
 
 
 def parse_filters(
@@ -186,7 +190,13 @@ def api_datasets() -> dict[str, object]:
 @app.post("/api/datasets/register")
 def api_register_dataset(payload: DatasetRegisterRequest) -> dict[str, object]:
     try:
-        dataset = register_dataset(payload.name, payload.source_path, make_active=payload.make_active)
+        with _build_lock, _clean_lock:
+            if _build_job["status"] == "running" or _clean_job["status"] == "running":
+                raise HTTPException(status_code=409, detail="任务运行中，完成后再添加数据源。")
+            dataset = register_dataset(
+                payload.name, payload.source_path, make_active=payload.make_active,
+                source_timezone=payload.source_timezone, csv_encoding=payload.csv_encoding, sheet_name=payload.sheet_name,
+            )
         clear_track_tile_cache()
         return {
             "accepted": True,
@@ -194,12 +204,68 @@ def api_register_dataset(payload: DatasetRegisterRequest) -> dict[str, object]:
             "active_dataset_id": active_dataset_id(),
             "datasets": list_datasets(),
         }
+    except HTTPException:
+        raise
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/datasets/preview")
+def api_preview_dataset(payload: DatasetRegisterRequest) -> dict[str, object]:
+    from backend.app.services.ingestion import inspect_tabular
+    source = Path(payload.source_path).expanduser().resolve()
+    if not source.is_file():
+        raise HTTPException(status_code=404, detail="找不到数据文件。")
+    try:
+        return inspect_tabular(source, payload.source_timezone, payload.csv_encoding, payload.sheet_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"无法读取文件：{exc}") from exc
+
+
+@app.post("/api/datasets/upload")
+async def api_upload_dataset(
+    file: UploadFile = File(...), name: str = Form(""),
+    source_timezone: str = Form("Asia/Shanghai"), csv_encoding: str = Form("auto"),
+) -> dict[str, object]:
+    from backend.app.services.ingestion import TABULAR_SUFFIXES, inspect_tabular, validate_options
+    filename = Path(file.filename or "").name
+    suffix = Path(filename).suffix.lower()
+    if suffix not in TABULAR_SUFFIXES:
+        raise HTTPException(status_code=400, detail="选择 CSV、XLSX 或 XLS 文件；原有 PKL 使用文件位置导入。")
+    try:
+        validate_options(source_timezone, csv_encoding)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    directory = DATA_DIR / "uploads" / uuid.uuid4().hex
+    source = directory / filename
+    try:
+        directory.mkdir(parents=True, exist_ok=False)
+        with source.open("wb") as handle:
+            while chunk := await file.read(1024 * 1024):
+                handle.write(chunk)
+        preview = inspect_tabular(source, source_timezone, csv_encoding)
+        with _build_lock, _clean_lock:
+            if _build_job["status"] == "running" or _clean_job["status"] == "running":
+                raise HTTPException(status_code=409, detail="任务运行中，完成后再上传数据源。")
+            dataset = register_dataset(name or Path(filename).stem, source, source_timezone=source_timezone, csv_encoding=csv_encoding)
+        clear_track_tile_cache()
+        return {"accepted": True, "dataset": dataset, "preview": preview, "active_dataset_id": active_dataset_id(), "datasets": list_datasets()}
+    except Exception as exc:
+        if source.exists():
+            source.unlink()
+        if directory.exists():
+            directory.rmdir()
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=400, detail=f"导入失败：{exc}") from exc
+    finally:
+        await file.close()
 
 
 @app.post("/api/datasets/select/{dataset_id}")

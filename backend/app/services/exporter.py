@@ -47,6 +47,8 @@ _SHIP_TYPE_NAMES: dict[int, str] = {
 
 
 def _ship_type_name(code: int) -> str:
+    if code == -1:
+        return "未知类型"
     return _SHIP_TYPE_NAMES.get(code, f"类型{code}")
 
 

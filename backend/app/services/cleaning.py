@@ -91,6 +91,9 @@ def run_cleaning(
 
     source = points_sql(source_path)
     with connect() as con:
+        source_columns = {row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()}
+        extra_columns = [name for name in ("draught", "heading") if name in source_columns]
+        extra_sql = "".join(f", {name}" for name in extra_columns)
         emit(progress, "validating", "校验字段范围和基础格式", percent=8)
         con.execute(_base_table_sql(source), _base_params(config))
         emit(progress, "deduplicating", "去除精确重复点", percent=18)
@@ -98,7 +101,7 @@ def run_cleaning(
         emit(progress, "motion", "识别跳点、漂移点和速度突变点", percent=42)
         con.execute(_flagged_table_sql(config))
         emit(progress, "segmenting", "切分轨迹片段并标注航行状态", percent=68)
-        con.execute(_final_table_sql(config))
+        con.execute(_final_table_sql(config, extra_columns))
 
         emit(progress, "writing", "写入清洗后的 Parquet", percent=86)
         con.execute(
@@ -113,7 +116,7 @@ def run_cleaning(
                     speed,
                     ship_type,
                     length,
-                    width,
+                    width{extra_sql},
                     trajectory_id,
                     clean_segment_id,
                     segment_break_reason,
@@ -162,6 +165,7 @@ def run_cleaning(
             "ship_type",
             "length",
             "width",
+            *extra_columns,
             "trajectory_id",
             "clean_segment_id",
             "segment_break_reason",
@@ -355,7 +359,8 @@ def _flagged_table_sql(config: CleaningConfig) -> str:
     """
 
 
-def _final_table_sql(config: CleaningConfig) -> str:
+def _final_table_sql(config: CleaningConfig, extra_columns: list[str] | None = None) -> str:
+    extra_sql = "".join(f", {name}" for name in (extra_columns or []))
     return f"""
         CREATE OR REPLACE TEMP TABLE cleaning_final AS
         WITH kept AS (
@@ -368,7 +373,7 @@ def _final_table_sql(config: CleaningConfig) -> str:
                 speed,
                 ship_type,
                 length,
-                width,
+                width{extra_sql},
                 trajectory_id,
                 nav_state
             FROM cleaning_flagged
@@ -396,7 +401,7 @@ def _final_table_sql(config: CleaningConfig) -> str:
                 speed,
                 ship_type,
                 length,
-                width,
+                width{extra_sql},
                 trajectory_id,
                 nav_state,
                 timestamp - prev_timestamp AS time_delta_seconds,

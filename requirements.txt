@@ -11,3 +11,4 @@ mapbox-vector-tile
 shapely
 pillow
 requests
+xlrd==2.0.1

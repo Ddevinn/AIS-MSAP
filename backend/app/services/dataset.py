@@ -41,6 +41,9 @@ class DatasetPaths:
     source_manifest: Path
     cleaned_parquet: Path
     cleaning_manifest: Path
+    source_timezone: str = "Asia/Shanghai"
+    csv_encoding: str = "auto"
+    sheet_name: str | None = None
 
 
 def dataset_ready(dataset_id: str | None = None) -> bool:
@@ -114,12 +117,20 @@ def list_datasets() -> list[dict[str, Any]]:
     return sorted(rows, key=lambda item: (not item["active"], str(item["name"])))
 
 
-def register_dataset(name: str, source_path: str | Path, make_active: bool = True) -> dict[str, Any]:
+def register_dataset(
+    name: str, source_path: str | Path, make_active: bool = True,
+    source_timezone: str = "Asia/Shanghai", csv_encoding: str = "auto", sheet_name: str | None = None,
+) -> dict[str, Any]:
+    from backend.app.services.ingestion import TABULAR_SUFFIXES, inspect_tabular, validate_options
+
     source = Path(source_path).expanduser().resolve()
-    if not source.exists():
+    if not source.is_file():
         raise FileNotFoundError(f"Source file does not exist: {source}")
-    if source.suffix.lower() not in {".pkl", ".pickle"}:
-        raise ValueError("当前导入流程只支持 pkl/pickle；CSV/TXT 可在下一步接入同一数据集逻辑。")
+    if source.suffix.lower() not in TABULAR_SUFFIXES | {".pkl", ".pickle"}:
+        raise ValueError("当前支持 CSV、Excel (.xlsx/.xls) 和原有 PKL/PICKLE 文件。")
+    validate_options(source_timezone, csv_encoding)
+    if source.suffix.lower() in TABULAR_SUFFIXES:
+        inspect_tabular(source, source_timezone, csv_encoding, sheet_name)
 
     registry = _registry()
     dataset_id = _unique_dataset_id(name or source.stem, registry["datasets"])
@@ -132,6 +143,9 @@ def register_dataset(name: str, source_path: str | Path, make_active: bool = Tru
         "source_manifest": str(dataset_dir / "manifest.json"),
         "cleaned_parquet": str(dataset_dir / "ais_points_cleaned.parquet"),
         "cleaning_manifest": str(dataset_dir / "cleaning_manifest.json"),
+        "source_timezone": source_timezone,
+        "csv_encoding": csv_encoding,
+        "sheet_name": sheet_name,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     registry["datasets"][dataset_id] = dataset
@@ -188,6 +202,10 @@ def read_active_manifest(dataset_id: str | None = None) -> dict[str, Any] | None
 def inspect_pickle(source_path: Path | None = None, dataset_id: str | None = None) -> dict[str, Any]:
     if source_path is None:
         source_path = dataset_paths(dataset_id).source_path
+    if source_path.suffix.lower() in {".csv", ".xls", ".xlsx"}:
+        from backend.app.services.ingestion import inspect_tabular
+        paths = dataset_paths(dataset_id)
+        return inspect_tabular(source_path, paths.source_timezone, paths.csv_encoding, paths.sheet_name)
     obj = pd.read_pickle(source_path)
     if not isinstance(obj, list):
         raise TypeError(f"Expected pickle list, got {type(obj)!r}")
@@ -226,6 +244,13 @@ def build_parquet(
         manifest = read_manifest(dataset_id)
         if manifest:
             return manifest
+
+    if source_path.suffix.lower() in {".csv", ".xls", ".xlsx"}:
+        from backend.app.services.ingestion import build_tabular_parquet
+        return build_tabular_parquet(
+            source_path, output_path, manifest_path, paths.dataset_id, paths.name,
+            paths.source_timezone, paths.csv_encoding, paths.sheet_name, progress,
+        )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
@@ -391,6 +416,9 @@ def _paths_from_record(dataset: dict[str, Any]) -> DatasetPaths:
         source_manifest=Path(dataset["source_manifest"]),
         cleaned_parquet=Path(dataset["cleaned_parquet"]),
         cleaning_manifest=Path(dataset["cleaning_manifest"]),
+        source_timezone=str(dataset.get("source_timezone", "Asia/Shanghai")),
+        csv_encoding=str(dataset.get("csv_encoding", "auto")),
+        sheet_name=dataset.get("sheet_name"),
     )
 
 
