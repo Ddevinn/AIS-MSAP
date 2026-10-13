@@ -7,6 +7,16 @@ data/cache/
 data/exports/
 data/processed/*.parquet
 data/processed/*.duckdb
+data/**/*.parquet
+data/**/*.duckdb
+data/**/*.csv
+data/**/*.xls
+data/**/*.xlsx
+data/uploads/
+work/
+.env
+.env.*
+!.env.example
 
 *.pkl
 *.pickle

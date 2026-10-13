@@ -8,7 +8,7 @@ from mapbox_vector_tile import encode
 from shapely.geometry import LineString
 
 from backend.app.services.analysis import require_dataset
-from backend.app.services.query import QueryFilters, connect, points_sql, trajectory_column, where_clause
+from backend.app.services.query import QueryFilters, connect, trajectory_column, trajectory_source, where_clause
 
 WEB_MERCATOR_RADIUS = 6_378_137.0
 WEB_MERCATOR_LIMIT = WEB_MERCATOR_RADIUS * math.pi
@@ -29,11 +29,11 @@ def tracks_mvt(
     if z < MIN_TRACK_ZOOM:
         return _empty_tile()
 
-    merged = _merge_filters_with_tile_bbox(filters, z, x, y)
-    if _is_empty_filter_window(merged):
+    filters = filters or QueryFilters()
+    if _is_empty_filter_window(filters):
         return _empty_tile()
 
-    key = _cache_key(z, x, y, merged, max_points)
+    key = _cache_key(z, x, y, filters, max_points)
     return _tracks_mvt_cached(*key)
 
 
@@ -72,9 +72,14 @@ def _tracks_mvt_cached(
     lat_min: float | None,
     lat_max: float | None,
     ship_type: int | None,
+    ship_type_min: int | None,
+    ship_type_max: int | None,
     mmsi: int | None,
     speed_min: float | None,
     speed_max: float | None,
+    spatial_mode: str | None,
+    spatial_geometry: str | None,
+    behavior: str | None,
     max_points: int,
 ) -> bytes:
     filters = QueryFilters(
@@ -85,44 +90,76 @@ def _tracks_mvt_cached(
         lat_min=lat_min,
         lat_max=lat_max,
         ship_type=ship_type,
+        ship_type_min=ship_type_min,
+        ship_type_max=ship_type_max,
         mmsi=mmsi,
         speed_min=speed_min,
         speed_max=speed_max,
+        spatial_mode=spatial_mode,
+        spatial_geometry=spatial_geometry,
+        behavior=behavior,
     )
-    where, params = where_clause(filters)
+    if filters.spatial_mode == "section" or filters.behavior:
+        source, source_params = trajectory_source(filters)
+        lon_min, lat_min, lon_max, lat_max = tile_bbox_wgs84(z, x, y)
+        tile_filters = QueryFilters(lon_min=lon_min, lon_max=lon_max, lat_min=lat_min, lat_max=lat_max)
+        where, tile_params = where_clause(tile_filters, include_spatial=False)
+        params = [*source_params, *tile_params]
+    else:
+        merged = _merge_filters_with_tile_bbox(filters, z, x, y)
+        if _is_empty_filter_window(merged):
+            return _empty_tile()
+        source, params = trajectory_source(merged)
+        where = ""
     max_points = max(2_000, min(int(max_points), 100_000))
     base_step = _zoom_step(z)
     track_col = trajectory_column()
 
     with connect() as con:
         raw_count = con.execute(
-            f"SELECT count(*)::UBIGINT FROM {points_sql()} {where}",
+            f"SELECT count(*)::UBIGINT FROM {source} {where}",
             params,
         ).fetchone()[0]
         if raw_count < 2:
             return _empty_tile()
+        # 按段单独抽稀：先统计每段点数，再对每段限制最多 per_seg_max 个点
+        # 这样可以避免全局步长过大导致每段只保留 2 个点的蜘蛛网问题
+        seg_count = con.execute(
+            f"SELECT count(DISTINCT {track_col})::UBIGINT FROM {source} {where}",
+            params,
+        ).fetchone()[0]
+        if seg_count == 0:
+            return _empty_tile()
+        per_seg_max = max(8, max_points // max(seg_count, 1))
         step = max(base_step, math.ceil(raw_count / max_points))
         rows = con.execute(
             f"""
             WITH filtered AS (
                 SELECT {track_col} AS trajectory_id, mmsi, timestamp, lon, lat, speed, course, ship_type
-                FROM {points_sql()}
+                FROM {source}
                 {where}
             ),
-            numbered AS (
-                SELECT *,
-                       row_number() OVER (PARTITION BY trajectory_id ORDER BY timestamp) AS rn
+            seg_counts AS (
+                SELECT trajectory_id, count(*) AS seg_pts
                 FROM filtered
+                GROUP BY trajectory_id
+            ),
+            numbered AS (
+                SELECT f.*,
+                       row_number() OVER (PARTITION BY f.trajectory_id ORDER BY f.timestamp) AS rn,
+                       s.seg_pts
+                FROM filtered f
+                JOIN seg_counts s ON f.trajectory_id = s.trajectory_id
             )
             SELECT trajectory_id, mmsi, timestamp, lon, lat, speed, course, ship_type
             FROM numbered
-            WHERE ((rn - 1) % ?) = 0
+            WHERE ((rn - 1) % greatest(1, seg_pts / {per_seg_max})) = 0
             ORDER BY trajectory_id, timestamp
             """,
-            [*params, step],
+            params,
         ).fetchall()
 
-    features = _rows_to_features(rows, z, raw_count, step)
+    features = _rows_to_features(rows, z, raw_count, per_seg_max)
     if not features:
         return _empty_tile()
 
@@ -237,9 +274,14 @@ def _merge_filters_with_tile_bbox(filters: QueryFilters | None, z: int, x: int, 
         lat_min=max_value(filters.lat_min, lat_min),
         lat_max=min_value(filters.lat_max, lat_max),
         ship_type=filters.ship_type,
+        ship_type_min=filters.ship_type_min,
+        ship_type_max=filters.ship_type_max,
         mmsi=filters.mmsi,
         speed_min=filters.speed_min,
         speed_max=filters.speed_max,
+        spatial_mode=filters.spatial_mode,
+        spatial_geometry=filters.spatial_geometry,
+        behavior=filters.behavior,
     )
 
 
@@ -282,9 +324,14 @@ def _cache_key(
         rounded(filters.lat_min),
         rounded(filters.lat_max),
         filters.ship_type,
+        filters.ship_type_min,
+        filters.ship_type_max,
         filters.mmsi,
         filters.speed_min,
         filters.speed_max,
+        filters.spatial_mode,
+        filters.spatial_geometry,
+        filters.behavior,
         max_points,
     )
 

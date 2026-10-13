@@ -1,244 +1,321 @@
 <!doctype html>
 <html lang="zh-CN">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AIS 船舶轨迹清洗与可视化平台</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AIS 船舶轨迹分析工作台</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260713-measure-tool" />
   </head>
   <body>
-    <div class="app-frame">
-      <header class="app-header">
-        <div class="brand-block">
-          <div class="brand-mark">AIS</div>
+    <svg class="svg-sprite" aria-hidden="true">
+      <symbol id="i-ship" viewBox="0 0 24 24"><path d="M3 17h18l-2 3H6l-3-3Z"/><path d="m5 17 2-8h10l2 8M9 9V5h6v4M12 5V2"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 8a7 7 0 0 1 11.7-2.1L20 8M4 16l2.2 2.1A7 7 0 0 0 18 16"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/></symbol>
+      <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"/></symbol>
+      <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4 4 4M4 20h16"/></symbol>
+      <symbol id="i-file-plus" viewBox="0 0 24 24"><path d="M6 2h8l4 4v16H6zM14 2v5h5M12 11v6m-3-3h6"/></symbol>
+      <symbol id="i-filter" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8L3 5Z"/></symbol>
+      <symbol id="i-broom" viewBox="0 0 24 24"><path d="m15 3 6 6-7 7-6-6 7-7ZM8 10l-5 5 6 6 5-5M5 17l2 2"/></symbol>
+      <symbol id="i-map" viewBox="0 0 24 24"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"/><path d="M9 3v15M15 6v15"/></symbol>
+      <symbol id="i-maximize" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></symbol>
+      <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></symbol>
+      <symbol id="i-section" viewBox="0 0 24 24"><path d="M5 19 19 5M4 8h6M14 16h6"/></symbol>
+      <symbol id="i-route" viewBox="0 0 24 24"><circle cx="5" cy="18" r="2"/><circle cx="19" cy="6" r="2"/><path d="M7 18c7 0 3-12 10-12"/></symbol>
+      <symbol id="i-polygon" viewBox="0 0 24 24"><path d="m7 3 12 4 1 11-10 3-7-8 4-10Z"/><circle cx="7" cy="3" r="1"/><circle cx="19" cy="7" r="1"/><circle cx="20" cy="18" r="1"/><circle cx="10" cy="21" r="1"/><circle cx="3" cy="13" r="1"/></symbol>
+      <symbol id="i-rectangle" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></symbol>
+      <symbol id="i-circle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7V5Z"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+      <symbol id="i-undo" viewBox="0 0 24 24"><path d="m9 7-5 5 5 5M5 12h8a6 6 0 0 1 6 6"/></symbol>
+      <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7M2 20h20"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+      <symbol id="i-ruler" viewBox="0 0 24 24"><path d="m4 17 13-13 3 3L7 20l-3-3Z"/><path d="m13 8 3 3M9 12l2 2"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 12 9 5 9-5M3 16l9 5 9-5"/></symbol>
+    </svg>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark"><svg class="ui-icon brand-icon" aria-hidden="true"><use href="#i-ship" /></svg></span>
           <div>
-            <h1>AIS 船舶轨迹清洗与可视化平台</h1>
-            <p>OpenStreetMap 底图 · MVT 轨迹瓦片 · 数据清洗 · 交通流统计 · 密度热力图</p>
+            <h1>船舶轨迹分析工作台</h1>
+            <p>加载数据 → 清洗数据 → 查看船舶轨迹和统计结果</p>
           </div>
         </div>
-        <div class="header-actions">
-          <div class="status-pill">
-            <span class="status-dot"></span>
-            <span id="statusText">读取状态中</span>
-          </div>
-          <button id="refreshBtn" class="btn ghost">刷新统计</button>
-          <button id="excelBtn" class="btn primary">导出 Excel</button>
+        <div class="topbar-actions">
+          <span id="statusText" class="status-pill"><i></i>正在检查数据</span>
+          <button id="reportExcelBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg>导出统计表</button>
+          <button id="refreshBtn" class="btn primary"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>刷新统计</button>
         </div>
       </header>
 
-      <main class="dashboard-grid">
-        <aside class="control-rail">
-          <section class="panel">
-            <div class="panel-title">
-              <div>
-                <h2>数据导入</h2>
-                <p>当前示例从本地 pkl 转换为 Parquet</p>
-              </div>
-              <span class="panel-icon">▦</span>
+      <main class="app-layout">
+        <aside class="sidebar">
+          <section class="side-card load-card">
+            <div class="card-heading">
+              <div class="heading-group"><span class="section-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-database" /></svg></span><div><span class="eyebrow">第 1 步</span><h2>加载数据</h2></div></div>
+              <div class="card-heading-actions"><button id="reloadDatasetsBtn" class="icon-btn" title="刷新数据列表"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg></button><button class="collapse-btn" type="button" data-collapse-card aria-expanded="true" title="收起加载数据"><svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg></button></div>
             </div>
-            <button id="buildBtn" class="btn primary full">构建 Parquet</button>
-            <div class="job-line" id="jobText">待命</div>
-            <div class="mini-grid">
-              <div>
-                <span>标准字段</span>
-                <strong>9</strong>
+            <label class="field">当前数据
+              <select id="datasetSelect"></select>
+            </label>
+            <button id="selectDatasetBtn" class="btn dark full"><svg class="ui-icon" aria-hidden="true"><use href="#i-database" /></svg>使用所选数据</button>
+            <div id="datasetList" class="dataset-list"></div>
+            <details class="compact-details">
+              <summary>添加新的数据文件</summary>
+              <div class="details-body">
+                <label class="field">数据名称<input id="datasetNameInput" type="text" placeholder="例如：2024 年 1 月船舶数据" /></label>
+                <label class="field">数据文件位置<input id="datasetPathInput" type="text" placeholder="D:\data\船舶数据文件" /></label>
+                <button id="addDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-file-plus" /></svg>添加这个文件</button>
               </div>
-              <div>
-                <span>存储格式</span>
-                <strong>Parquet</strong>
-              </div>
+            </details>
+            <button id="buildBtn" class="btn primary full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>加载数据</button>
+            <div id="jobText" class="job-line">待命</div>
+          </section>
+
+          <section class="side-card filter-card">
+            <div class="card-heading">
+              <div class="heading-group"><span class="section-icon violet"><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg></span><div><span class="eyebrow">查看选项</span><h2>筛选结果</h2></div></div>
+              <div class="card-heading-actions"><span class="card-badge">联动</span><button class="collapse-btn" type="button" data-collapse-card aria-expanded="true" title="收起筛选结果"><svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg></button></div>
             </div>
-            <div id="fieldBadges" class="badge-wrap">
-              <span>MMSI</span><span>时间</span><span>经度</span><span>纬度</span><span>航速</span><span>航向</span><span>船型</span><span>船长</span><span>船宽</span>
+            <div class="field-grid two">
+              <label class="field">开始时间<input id="startInput" type="datetime-local" /></label>
+              <label class="field">结束时间<input id="endInput" type="datetime-local" /></label>
+            </div>
+            <div class="field-grid two">
+              <label class="field">最低航速<input id="speedMinInput" type="number" step="0.1" placeholder="kn" /></label>
+              <label class="field">最高航速<input id="speedMaxInput" type="number" step="0.1" placeholder="kn" /></label>
+            </div>
+            <label class="field">船舶类型
+              <select id="shipTypeInput">
+                <option value="">全部船型</option>
+                <option value="20:29">翼地船（20–29）</option>
+                <option value="30:30">渔船（30）</option>
+                <option value="31:32">拖轮（31–32）</option>
+                <option value="33:33">疏浚船（33）</option>
+                <option value="34:34">潜水作业（34）</option>
+                <option value="35:35">军事（35）</option>
+                <option value="36:36">帆船（36）</option>
+                <option value="37:37">游艇（37）</option>
+                <option value="40:49">高速船（40–49）</option>
+                <option value="50:59">特种船（50–59）</option>
+                <option value="60:69">客船（60–69）</option>
+                <option value="70:79">货船（70–79）</option>
+                <option value="80:89">油轮（80–89）</option>
+                <option value="90:99">其他（90–99）</option>
+              </select>
+            </label>
+            <label class="field">船舶编号<input id="mmsiFilterInput" type="text" inputmode="numeric" placeholder="输入船舶编号" /></label>
+            <details class="compact-details">
+              <summary>手动经纬度范围</summary>
+              <div class="details-body field-grid two">
+                <label class="field">最小经度<input id="lonMinInput" type="number" step="0.0001" /></label>
+                <label class="field">最大经度<input id="lonMaxInput" type="number" step="0.0001" /></label>
+                <label class="field">最小纬度<input id="latMinInput" type="number" step="0.0001" /></label>
+                <label class="field">最大纬度<input id="latMaxInput" type="number" step="0.0001" /></label>
+              </div>
+            </details>
+            <div class="button-row">
+              <button id="applyBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg>应用筛选</button>
+              <button id="clearBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-close" /></svg>清空</button>
             </div>
           </section>
 
-          <section class="panel">
-            <div class="panel-title">
-              <div>
-                <h2>数据清洗</h2>
-                <p>阈值可调整，结果写入独立清洗表</p>
+          <section class="side-card cleaning-card">
+            <div class="card-heading">
+              <div class="heading-group"><span class="section-icon green"><svg class="ui-icon" aria-hidden="true"><use href="#i-broom" /></svg></span><div><span class="eyebrow">第 2 步</span><h2>清洗数据</h2></div></div>
+              <div class="card-heading-actions"><span class="card-badge success">自动检查</span><button class="collapse-btn" type="button" data-collapse-card aria-expanded="true" title="收起清洗数据"><svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg></button></div>
+            </div>
+            <details class="compact-details">
+              <summary>高级清洗设置（通常无需修改）</summary>
+              <div class="details-body field-grid two compact">
+                <label class="field">最大航速<input id="cleanSpeedMaxInput" type="number" value="50" /></label>
+                <label class="field">异常跳点速度<input id="cleanJumpSpeedInput" type="number" value="50" /></label>
+                <label class="field">最大加速度<input id="cleanAccelInput" type="number" value="8" /></label>
+                <label class="field">长时间中断<input id="cleanGapInput" type="number" value="60" /></label>
+                <label class="field">长距离中断<input id="cleanDistanceGapInput" type="number" value="3" /></label>
+                <label class="field">停留航速<input id="cleanStopSpeedInput" type="number" value="0.5" step="0.1" /></label>
+                <label class="field">低速阈值<input id="cleanLowSpeedInput" type="number" value="3" step="0.1" /></label>
+                <label class="check-field"><input id="cleanDedupeInput" type="checkbox" checked />删除重复记录</label>
               </div>
-              <span class="panel-icon">✓</span>
-            </div>
-            <div class="form-grid two">
-              <label>最大航速 <input id="cleanSpeedMaxInput" type="number" step="0.1" value="50" /></label>
-              <label>跳点速度 <input id="cleanJumpSpeedInput" type="number" step="0.1" value="50" /></label>
-              <label>最大加速度 <input id="cleanAccelInput" type="number" step="0.1" value="8" /></label>
-              <label>断点分钟 <input id="cleanGapInput" type="number" step="1" value="60" /></label>
-              <label>断点距离(nm) <input id="cleanDistanceGapInput" type="number" step="0.1" value="3" /></label>
-              <label>停留航速 <input id="cleanStopSpeedInput" type="number" step="0.1" value="0.5" /></label>
-              <label>低速航速 <input id="cleanLowSpeedInput" type="number" step="0.1" value="3" /></label>
-            </div>
-            <label class="check-row"><input id="cleanDedupeInput" type="checkbox" checked /> 去除精确重复点</label>
+            </details>
             <div class="button-row">
-              <button id="runCleanBtn" class="btn primary">运行清洗</button>
-              <button id="resetCleanBtn" class="btn ghost">使用原始数据</button>
+              <button id="runCleanBtn" class="btn primary"><svg class="ui-icon" aria-hidden="true"><use href="#i-play" /></svg>开始清洗</button>
+              <button id="resetCleanBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>恢复清洗前数据</button>
             </div>
-            <div class="job-line" id="cleanJobText">待命</div>
-            <div class="task-progress" id="cleanProgressBox">
-              <div class="task-progress-head">
-                <span id="cleanProgressStage">等待清洗任务</span>
-                <strong id="cleanProgressValue">0%</strong>
-              </div>
-              <div class="progress-track">
-                <div class="progress-fill" id="cleanProgressFill" style="width: 0%"></div>
-              </div>
+            <div id="cleanJobText" class="job-line">待命</div>
+            <div class="progress-box">
+              <div><span id="cleanProgressStage">等待任务</span><b id="cleanProgressValue">0%</b></div>
+              <div class="progress-track"><i id="cleanProgressFill" style="width:0%"></i></div>
             </div>
             <div id="qualityPanel" class="quality-list"></div>
-          </section>
-
-          <section class="panel">
-            <div class="panel-title">
-              <div>
-                <h2>联动筛选</h2>
-                <p>统计、密度图和轨迹瓦片共用条件</p>
-              </div>
-              <span class="panel-icon">⌕</span>
-            </div>
-            <div class="form-grid">
-              <label>开始时间 <input id="startInput" type="datetime-local" /></label>
-              <label>结束时间 <input id="endInput" type="datetime-local" /></label>
-            </div>
-            <div class="form-grid two">
-              <label>最小经度 <input id="lonMinInput" type="number" step="0.0001" /></label>
-              <label>最大经度 <input id="lonMaxInput" type="number" step="0.0001" /></label>
-              <label>最小纬度 <input id="latMinInput" type="number" step="0.0001" /></label>
-              <label>最大纬度 <input id="latMaxInput" type="number" step="0.0001" /></label>
-            </div>
-            <div class="form-grid two">
-              <label>船舶类型 <input id="shipTypeInput" type="number" step="1" /></label>
-              <label>MMSI <input id="mmsiFilterInput" type="text" inputmode="numeric" /></label>
-            </div>
-            <div class="button-row">
-              <button id="applyBtn" class="btn dark">应用筛选</button>
-              <button id="clearBtn" class="btn ghost">清空</button>
-            </div>
+            <div id="cleaningSummary" class="mini-metric-grid"></div>
           </section>
         </aside>
 
-        <section class="main-workspace">
-          <section class="workspace-head">
-            <div>
-              <h2>离线 AIS 数据工作台</h2>
-              <p id="datasetMeta">等待数据集</p>
+        <section class="main-content">
+          <section class="overview-card">
+            <div class="overview-title">
+              <div class="heading-group"><span class="section-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-chart" /></svg></span><div><span class="eyebrow">第 3 步</span><h2>查看结果</h2></div></div>
+              <p id="datasetMeta">等待加载数据</p>
             </div>
-            <div class="head-tabs">
-              <span>清洗</span>
-              <span>轨迹</span>
-              <span>统计</span>
-              <span>导出</span>
-            </div>
+            <div id="metrics" class="metric-grid"></div>
           </section>
 
-          <section id="metrics" class="metric-grid"></section>
-          <section id="cleaningSummary" class="metric-grid compact"></section>
-
           <section class="map-card">
-            <div class="section-head">
-              <div>
-                <h3>OpenStreetMap 船舶轨迹主视图</h3>
-                <p>底图使用 OSM 瓦片，AIS 轨迹由后端动态生成 MVT 矢量瓦片</p>
+            <div class="map-card-head">
+              <div class="map-title-group">
+                <span class="section-icon map"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg></span>
+                <div><span class="eyebrow">地图展示</span><h2>船舶轨迹与标记</h2><p>查看船舶轨迹，添加点、截面、航线和区域标记，并按标记统计交通流</p></div>
               </div>
               <div class="button-row tight">
-                <button id="fitMapBtn" class="btn ghost">定位数据范围</button>
-                <button id="reloadTilesBtn" class="btn ghost">刷新轨迹瓦片</button>
+                <button id="mapFullscreenBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-maximize" /></svg><span id="mapFullscreenText">全屏查看</span></button>
+                <button id="fitMapBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-locate" /></svg>回到数据范围</button>
+                <button id="reloadTracksBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>刷新轨迹</button>
               </div>
             </div>
-            <div id="map" class="map-stage"></div>
-            <div id="mapStatus" class="map-status">地图初始化中</div>
+
+            <div class="map-workspace">
+              <div class="map-pane">
+                <div id="map" class="map-stage"></div>
+                <button id="mapCoordinates" class="map-coordinates" type="button" title="点击切换为度分秒">经度 —　纬度 —</button>
+                <div id="mapStatus" class="map-status">地图初始化中</div>
+              </div>
+
+              <aside class="map-workbench">
+                <nav class="map-tool-launcher" aria-label="地图工具">
+                  <button id="toggleMarkerPanelBtn" data-map-tool="marker" title="标记" aria-label="标记"><svg class="ui-icon" aria-hidden="true"><use href="#i-pin" /></svg></button>
+                  <button id="toggleFilterPanelBtn" data-map-tool="filter" title="按标记查看" aria-label="按标记查看"><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg></button>
+                  <button id="toggleMeasurePanelBtn" data-map-tool="measure" title="测距" aria-label="测距"><svg class="ui-icon" aria-hidden="true"><use href="#i-ruler" /></svg></button>
+                  <button id="toggleBehaviorPanelBtn" data-map-tool="behavior" title="行为识别" aria-label="行为识别"><svg class="ui-icon" aria-hidden="true"><use href="#i-route" /></svg></button>
+                </nav>
+
+                <section class="tool-section marker-groups-section" hidden>
+                  <div class="tool-title"><span>我的标记</span><small>按类型管理</small></div>
+                  <div class="marker-groups">
+                    <article><span class="marker-group-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-pin" /></svg></span><div><b>点标记</b><small><i data-marker-count="point">0</i> 个标记</small></div><button type="button" data-marker-add="point" title="添加点标记"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus" /></svg></button></article>
+                    <article><span class="marker-group-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-section" /></svg></span><div><b>截面</b><small><i data-marker-count="section">0</i> 个标记</small></div><button type="button" data-marker-add="section" title="添加截面"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus" /></svg></button></article>
+                    <article><span class="marker-group-icon violet"><svg class="ui-icon" aria-hidden="true"><use href="#i-route" /></svg></span><div><b>航线</b><small><i data-marker-count="route">0</i> 个标记</small></div><button type="button" data-marker-add="route" title="添加航线"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus" /></svg></button></article>
+                    <article><span class="marker-group-icon orange"><svg class="ui-icon" aria-hidden="true"><use href="#i-polygon" /></svg></span><div><b>区域</b><small><i data-marker-count="region">0</i> 个标记</small></div><button type="button" data-marker-add="region" title="添加区域"><svg class="ui-icon" aria-hidden="true"><use href="#i-plus" /></svg></button></article>
+                  </div>
+                </section>
+
+                <section class="tool-section marker-create-section" hidden>
+                  <div class="tool-title marker-editor-title"><button id="backToMarkerGroupsBtn" type="button" aria-label="返回标记分组"><svg class="ui-icon" aria-hidden="true"><use href="#i-back" /></svg></button><span id="markerEditorTitle">添加点标记</span><small>保存到本机浏览器</small></div>
+                  <div id="areaShapeOptions" class="area-shape-options" hidden>
+                    <span>区域形状</span>
+                    <div class="area-shape-grid">
+                      <button class="active" data-area-shape="polygon"><svg class="ui-icon" aria-hidden="true"><use href="#i-polygon" /></svg>任意多边形</button>
+                      <button data-area-shape="rectangle"><svg class="ui-icon" aria-hidden="true"><use href="#i-rectangle" /></svg>矩形</button>
+                      <button data-area-shape="circle"><svg class="ui-icon" aria-hidden="true"><use href="#i-circle" /></svg>圆形</button>
+                    </div>
+                  </div>
+                  <div class="field-grid two">
+                    <label class="field">名称<input id="markerNameInput" type="text" placeholder="自动命名" /></label>
+                    <label class="field">分类<input id="markerCategoryInput" type="text" value="未分类" /></label>
+                  </div>
+                  <label class="color-field wide">标记颜色<input id="markerColorInput" type="color" value="#7c3aed" /></label>
+                  <div class="coordinate-entry">
+                    <div class="coordinate-entry-head"><span>批量输入坐标</span><small id="coordinatePointCount">尚未添加坐标</small></div>
+                    <label class="field">每行一组坐标（十进制度或度分秒）
+                      <textarea id="markerCoordinatesInput" rows="5" placeholder="121.500000, 31.250000&#10;121°30′00″E, 31°15′00″N"></textarea>
+                    </label>
+                    <div class="button-row coordinate-entry-actions">
+                      <button id="addCoordinateBtn" class="btn primary"><svg class="ui-icon" aria-hidden="true"><use href="#i-pin" /></svg>批量加入</button>
+                      <button id="undoCoordinateBtn" class="btn ghost" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-undo" /></svg>撤销上一个</button>
+                    </div>
+                  </div>
+                  <p id="markerDrawHint" class="tool-hint">单击地图放置点标记。</p>
+                  <div class="button-row three">
+                    <button id="beginMarkerBtn" class="btn primary"><svg class="ui-icon" aria-hidden="true"><use href="#i-play" /></svg>开始绘制</button>
+                    <button id="finishMarkerBtn" class="btn dark" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-check" /></svg>完成</button>
+                    <button id="cancelMarkerBtn" class="btn ghost" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-close" /></svg>取消</button>
+                  </div>
+                </section>
+
+                <section class="tool-section spatial-section" hidden>
+                  <div class="tool-title"><span>按标记查看</span><small id="spatialFilterStatus">正在查看全部数据</small></div>
+                  <div class="field-grid two">
+                    <label class="field">筛选方式
+                      <select id="spatialModeSelect">
+                        <option value="section">按截面穿越</option>
+                        <option value="region">按区域范围</option>
+                      </select>
+                    </label>
+                    <label class="field">选择标记<select id="spatialMarkerSelect"><option value="">暂无可用标记</option></select></label>
+                  </div>
+                  <div class="button-row">
+                    <button id="applySpatialBtn" class="btn dark" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg>查看该标记</button>
+                    <button id="clearSpatialBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg>查看全部</button>
+                  </div>
+                  <div id="spatialTrafficStats" class="spatial-stats">选择截面或区域标记后显示交通流统计</div>
+                </section>
+
+                <section class="tool-section measure-section" hidden>
+                  <div class="tool-title"><span>测距</span><small>连续点击地图添加测量点</small></div>
+                  <div class="measure-result"><span>累计距离</span><strong id="measureTotal">0 m</strong><small id="measureSegment">尚未添加测量点</small></div>
+                  <div class="button-row">
+                    <button id="undoMeasureBtn" class="btn ghost" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-undo" /></svg>撤销</button>
+                    <button id="clearMeasureBtn" class="btn ghost" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-trash" /></svg>清空</button>
+                  </div>
+                </section>
+
+                <section class="tool-section behavior-section" hidden>
+                  <div class="tool-title"><span>船舶行为识别</span><small id="behaviorFilterStatus">显示全部轨迹</small></div>
+                  <label class="field">选择要显示的行为
+                    <select id="behaviorSelect">
+                      <option value="">请选择船舶行为</option>
+                      <option value="berthing">靠泊</option>
+                      <option value="anchoring">锚泊</option>
+                      <option value="turning">转向</option>
+                      <option value="straight">直航</option>
+                      <option value="speed_change">变速</option>
+                    </select>
+                  </label>
+                  <p class="muted behavior-note">选择后，地图仅显示该行为实际发生的轨迹片段。</p>
+                  <div class="button-row">
+                    <button id="applyBehaviorBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg>显示相应轨迹</button>
+                    <button id="clearBehaviorBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg>显示全部</button>
+                  </div>
+                </section>
+
+                <section class="tool-section marker-library" hidden>
+                  <div class="tool-title"><span>标记库</span><small>点击名称定位</small></div>
+                  <div id="markerList" class="marker-list"><div class="empty-state">尚未保存标记</div></div>
+                </section>
+              </aside>
+            </div>
           </section>
 
           <section class="analysis-grid">
-            <article class="surface wide">
-              <div class="section-head">
-                <div>
-                  <h3>船舶活动密度</h3>
-                  <p>后端聚合后生成静态 PNG，适合报表和科研留痕</p>
-                </div>
-                <div class="inline-controls">
-                  <label>分辨率 <input id="densityBinsInput" type="number" min="50" max="1000" value="400" /></label>
-                  <button id="densityBtn" class="btn ghost">生成</button>
-                </div>
-              </div>
-              <div class="image-stage">
-                <img id="densityImage" alt="AIS 密度图" />
-              </div>
+            <article class="chart-card">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-clock" /></svg></span><div><span class="eyebrow">统计图表</span><h3>航速分布</h3></div></div><select id="speedBinWidthSelect"><option value="0.5">0.5 kn</option><option value="1" selected>1 kn</option><option value="2">2 kn</option><option value="5">5 kn</option></select></div>
+              <div class="chart-stage"><canvas id="speedCanvas"></canvas></div>
             </article>
-
-            <article class="surface">
-              <div class="section-head">
-                <div>
-                  <h3>航速分布</h3>
-                  <p>当前筛选范围内的速度直方图</p>
-                </div>
-              </div>
-              <canvas id="speedCanvas" width="760" height="360"></canvas>
+            <article class="chart-card">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon violet"><svg class="ui-icon" aria-hidden="true"><use href="#i-ship" /></svg></span><div><span class="eyebrow">统计图表</span><h3>船型结构</h3></div></div></div>
+              <div class="chart-stage"><canvas id="shipCanvas"></canvas></div>
             </article>
-
-            <article class="surface">
-              <div class="section-head">
-                <div>
-                  <h3>船型结构</h3>
-                  <p>按船型统计点位与船舶数量</p>
-                </div>
-              </div>
-              <canvas id="shipCanvas" width="760" height="360"></canvas>
+            <article class="chart-card wide">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-chart" /></svg></span><div><span class="eyebrow">统计图表</span><h3>交通流时间序列</h3></div></div><select id="grainSelect"><option value="day">按日</option><option value="hour">按小时</option><option value="month">按月</option></select></div>
+              <div class="chart-stage wide"><canvas id="timeCanvas"></canvas></div>
             </article>
-
-            <article class="surface wide">
-              <div class="section-head">
-                <div>
-                  <h3>交通流时间序列</h3>
-                  <p>按小时、日、月聚合交通流变化</p>
-                </div>
-                <select id="grainSelect">
-                  <option value="day">日</option>
-                  <option value="hour">小时</option>
-                  <option value="month">月</option>
-                </select>
-              </div>
-              <canvas id="timeCanvas" width="1280" height="360"></canvas>
+            <article class="chart-card">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon green"><svg class="ui-icon" aria-hidden="true"><use href="#i-ruler" /></svg></span><div><span class="eyebrow">统计图表</span><h3>船长分布</h3></div></div><select id="lengthBinWidthSelect"><option value="5">5 m</option><option value="10" selected>10 m</option><option value="20">20 m</option><option value="50">50 m</option></select></div>
+              <div class="chart-stage"><canvas id="lengthCanvas"></canvas></div>
             </article>
-
-            <article class="surface">
-              <div class="section-head">
-                <div>
-                  <h3>航行状态</h3>
-                  <p>基于清洗后速度阈值识别</p>
-                </div>
-              </div>
+            <article class="chart-card">
+              <div class="chart-head"><div class="chart-title"><span class="chart-icon orange"><svg class="ui-icon" aria-hidden="true"><use href="#i-layers" /></svg></span><div><span class="eyebrow">统计图表</span><h3>航行状态</h3></div></div></div>
               <div id="navStatePanel" class="state-bars"></div>
-            </article>
-
-            <article class="surface">
-              <div class="section-head">
-                <div>
-                  <h3>报表输出</h3>
-                  <p>统计表、密度图和轨迹结果导出</p>
-                </div>
-              </div>
-              <div class="report-list">
-                <button class="report-row" id="reportExcelBtn"><span>综合统计报表</span><b>Excel</b></button>
-                <button class="report-row" id="reportDensityBtn"><span>密度热力图</span><b>PNG</b></button>
-                <button class="report-row" id="reportRefreshBtn"><span>重新计算统计</span><b>刷新</b></button>
-              </div>
-            </article>
-
-            <article class="surface wide">
-              <div class="section-head">
-                <div>
-                  <h3>单船轨迹</h3>
-                  <p>输入 MMSI 查询抽稀后的单船轨迹</p>
-                </div>
-                <div class="inline-controls">
-                  <input id="trackMmsiInput" type="text" inputmode="numeric" placeholder="MMSI" />
-                  <button id="trackBtn" class="btn ghost">查询</button>
-                </div>
-              </div>
-              <canvas id="trackCanvas" width="1280" height="420"></canvas>
-              <div id="trackMeta" class="muted"></div>
+              <button id="reportRefreshBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>重新计算当前统计</button>
             </article>
           </section>
         </section>
@@ -246,6 +323,7 @@
     </div>
 
     <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/static/app.js?v=20260715-behavior-segments"></script>
   </body>
 </html>

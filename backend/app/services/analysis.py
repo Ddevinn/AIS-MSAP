@@ -5,7 +5,7 @@ from typing import Any
 
 from backend.app.config import MAX_BROWSER_TRACK_POINTS
 from backend.app.services.dataset import dataset_ready, read_active_manifest
-from backend.app.services.query import QueryFilters, connect, points_sql, trajectory_column, where_clause
+from backend.app.services.query import behavior_condition, behavior_feature_source, QueryFilters, analysis_source, connect, points_sql, trajectory_column
 
 
 def require_dataset() -> None:
@@ -15,8 +15,14 @@ def require_dataset() -> None:
 
 def summary(filters: QueryFilters | None = None) -> dict[str, Any]:
     require_dataset()
-    where, params = where_clause(filters)
+    source, params = analysis_source(filters)
     track_col = trajectory_column()
+    direction_stats = (
+        ", count(*) FILTER (WHERE crossing_direction = 1)::UBIGINT AS forward_crossings, "
+        "count(*) FILTER (WHERE crossing_direction = -1)::UBIGINT AS reverse_crossings"
+        if filters and filters.spatial_mode == "section"
+        else ", 0::UBIGINT AS forward_crossings, 0::UBIGINT AS reverse_crossings"
+    )
     sql = f"""
         SELECT
             count(*)::UBIGINT AS point_count,
@@ -31,8 +37,8 @@ def summary(filters: QueryFilters | None = None) -> dict[str, Any]:
             min(speed) AS speed_min,
             max(speed) AS speed_max,
             count(DISTINCT {track_col})::UBIGINT AS trajectory_count
-        FROM {points_sql()}
-        {where}
+            {direction_stats}
+        FROM {source}
     """
     with connect() as con:
         row = con.execute(sql, params).fetchone()
@@ -49,23 +55,24 @@ def summary(filters: QueryFilters | None = None) -> dict[str, Any]:
         "speed_min",
         "speed_max",
         "trajectory_count",
+        "forward_crossings",
+        "reverse_crossings",
     ]
     result = dict(zip(keys, row))
+    result["spatial_mode"] = filters.spatial_mode if filters else None
+    result["crossing_count"] = result["point_count"] if filters and filters.spatial_mode == "section" else None
     result["manifest"] = read_active_manifest()
     return result
 
 
-def speed_histogram(bins: int = 40, filters: QueryFilters | None = None) -> dict[str, Any]:
+def speed_histogram(bins: int = 40, bin_width: float | None = None, filters: QueryFilters | None = None) -> dict[str, Any]:
     require_dataset()
-    bins = max(5, min(int(bins), 200))
-    where, params = where_clause(filters)
-    source = points_sql()
+    source, params = analysis_source(filters)
     with connect() as con:
         bounds = con.execute(
             f"""
             SELECT min(speed)::DOUBLE, max(speed)::DOUBLE
             FROM {source}
-            {where}
             """,
             params,
         ).fetchone()
@@ -74,12 +81,15 @@ def speed_histogram(bins: int = 40, filters: QueryFilters | None = None) -> dict
             return {"bins": [], "counts": []}
         if min_speed == max_speed:
             return {"bins": [float(min_speed), float(max_speed)], "counts": [0, 0]}
+        if bin_width is not None and float(bin_width) > 0:
+            computed_bins = max(5, min(int(ceil((max_speed - min_speed) / float(bin_width))), 200))
+        else:
+            computed_bins = max(5, min(int(bins), 200))
         rows = con.execute(
             f"""
             WITH filtered AS (
                 SELECT speed
                 FROM {source}
-                {where}
             )
             SELECT
                 least(CAST(floor((speed - ?) / NULLIF(? - ?, 0) * ?) AS INTEGER), ? - 1) AS bin,
@@ -88,28 +98,27 @@ def speed_histogram(bins: int = 40, filters: QueryFilters | None = None) -> dict
             GROUP BY bin
             ORDER BY bin
             """,
-            [*params, min_speed, max_speed, min_speed, bins, bins],
+            [*params, min_speed, max_speed, min_speed, computed_bins, computed_bins],
         ).fetchall()
 
-    counts = [0] * bins
+    counts = [0] * computed_bins
     for bin_idx, count in rows:
-        if bin_idx is not None and 0 <= int(bin_idx) < bins:
+        if bin_idx is not None and 0 <= int(bin_idx) < computed_bins:
             counts[int(bin_idx)] = int(count)
-    edges = [min_speed + (max_speed - min_speed) * i / bins for i in range(bins + 1)]
+    edges = [min_speed + (max_speed - min_speed) * i / computed_bins for i in range(computed_bins + 1)]
     return {"bins": edges, "counts": counts}
 
 
 def ship_type_distribution(limit: int = 20, filters: QueryFilters | None = None) -> list[dict[str, Any]]:
     require_dataset()
     limit = max(1, min(int(limit), 100))
-    where, params = where_clause(filters)
+    source, params = analysis_source(filters)
     with connect() as con:
         rows = con.execute(
             f"""
             SELECT ship_type::INTEGER AS ship_type, count(*)::UBIGINT AS point_count,
                    count(DISTINCT mmsi)::UBIGINT AS vessel_count
-            FROM {points_sql()}
-            {where}
+            FROM {source}
             GROUP BY ship_type
             ORDER BY point_count DESC
             LIMIT ?
@@ -124,7 +133,7 @@ def ship_type_distribution(limit: int = 20, filters: QueryFilters | None = None)
 
 def nav_state_distribution(filters: QueryFilters | None = None) -> list[dict[str, Any]]:
     require_dataset()
-    where, params = where_clause(filters)
+    source, params = analysis_source(filters)
     manifest = read_active_manifest() or {}
     columns = manifest.get("columns", [])
     state_expr = (
@@ -143,8 +152,7 @@ def nav_state_distribution(filters: QueryFilters | None = None) -> list[dict[str
             f"""
             WITH states AS (
                 SELECT {state_expr} AS nav_state
-                FROM {points_sql()}
-                {where}
+                FROM {source}
             ),
             counted AS (
                 SELECT nav_state, count(*)::UBIGINT AS point_count
@@ -172,6 +180,64 @@ def nav_state_distribution(filters: QueryFilters | None = None) -> list[dict[str
     ]
 
 
+def behavior_distribution(filters: QueryFilters | None = None) -> list[dict[str, Any]]:
+    """Recognize common vessel behaviors from consecutive AIS points."""
+    require_dataset()
+    source, params = analysis_source(filters)
+    feature_source = behavior_feature_source(source)
+
+    with connect() as con:
+        rows = con.execute(
+            f"""
+            WITH features AS MATERIALIZED ({feature_source}),
+            total AS (SELECT count(*)::DOUBLE AS point_count FROM features),
+            recognized AS (
+                SELECT 'berthing' AS behavior, mmsi FROM features
+                WHERE {behavior_condition('berthing')}
+                UNION ALL
+                SELECT 'anchoring', mmsi FROM features
+                WHERE {behavior_condition('anchoring')}
+                UNION ALL
+                SELECT 'turning', mmsi FROM features
+                WHERE {behavior_condition('turning')}
+                UNION ALL
+                SELECT 'straight', mmsi FROM features
+                WHERE {behavior_condition('straight')}
+                UNION ALL
+                SELECT 'speed_change', mmsi FROM features
+                WHERE {behavior_condition('speed_change')}
+            )
+            SELECT behavior, count(*)::UBIGINT, count(DISTINCT mmsi)::UBIGINT,
+                   count(*) * 100.0 / NULLIF(total.point_count, 0)
+            FROM recognized CROSS JOIN total
+            GROUP BY behavior, total.point_count
+            """,
+            params,
+        ).fetchall()
+
+    labels = {
+        "berthing": "靠泊",
+        "anchoring": "锚泊",
+        "turning": "转向",
+        "straight": "直航",
+        "speed_change": "变速",
+    }
+    counts = {
+        behavior: {
+            "behavior": behavior,
+            "label": labels[behavior],
+            "point_count": int(point_count),
+            "vessel_count": int(vessel_count),
+            "percentage": float(percentage or 0),
+        }
+        for behavior, point_count, vessel_count, percentage in rows
+    }
+    return [
+        counts.get(behavior, {"behavior": behavior, "label": label, "point_count": 0, "vessel_count": 0, "percentage": 0.0})
+        for behavior, label in labels.items()
+    ]
+
+
 def time_series(grain: str = "day", filters: QueryFilters | None = None) -> list[dict[str, Any]]:
     require_dataset()
     formats = {
@@ -180,7 +246,7 @@ def time_series(grain: str = "day", filters: QueryFilters | None = None) -> list
         "month": "%Y-%m",
     }
     fmt = formats.get(grain, formats["day"])
-    where, params = where_clause(filters)
+    source, params = analysis_source(filters)
     with connect() as con:
         rows = con.execute(
             f"""
@@ -189,8 +255,7 @@ def time_series(grain: str = "day", filters: QueryFilters | None = None) -> list
                 count(*)::UBIGINT AS point_count,
                 count(DISTINCT mmsi)::UBIGINT AS vessel_count,
                 avg(speed)::DOUBLE AS avg_speed
-            FROM {points_sql()}
-            {where}
+            FROM {source}
             GROUP BY bucket
             ORDER BY bucket
             """,
@@ -207,30 +272,81 @@ def time_series(grain: str = "day", filters: QueryFilters | None = None) -> list
     ]
 
 
-def density_grid(bins: int = 400, filters: QueryFilters | None = None) -> dict[str, Any]:
+def length_distribution(bins: int = 30, bin_width: float | None = None, filters: QueryFilters | None = None) -> dict[str, Any]:
+    """每艘独立船舶的船长分布直方图（以 MMSI 去重）。支持 bin_width（米）指定组距。"""
     require_dataset()
-    bins = max(50, min(int(bins), 1000))
-    where, params = where_clause(filters)
-    source = points_sql()
+    source, params = analysis_source(filters)
+    valid_cond = "length > 0 AND length IS NOT NULL AND isfinite(length) AND length <= 500"
+    full_where = f"WHERE {valid_cond}"
+    with connect() as con:
+        bounds = con.execute(
+            f"SELECT min(length)::DOUBLE, max(length)::DOUBLE FROM {source} {full_where}",
+            params,
+        ).fetchone()
+        min_len, max_len = bounds
+        if min_len is None or max_len is None:
+            return {"bins": [], "counts": []}
+        if min_len == max_len:
+            return {"bins": [float(min_len), float(max_len)], "counts": [0, 0]}
+        if bin_width is not None and float(bin_width) > 0:
+            computed_bins = max(5, min(int(ceil((max_len - min_len) / float(bin_width))), 200))
+        else:
+            computed_bins = max(5, min(int(bins), 100))
+        rows = con.execute(
+            f"""
+            WITH vessels AS (
+                SELECT mmsi, any_value(length) AS length
+                FROM {source}
+                {full_where}
+                GROUP BY mmsi
+            )
+            SELECT
+                least(CAST(floor((length - ?) / NULLIF(? - ?, 0) * ?) AS INTEGER), ? - 1) AS bin,
+                count(*)::UBIGINT AS vessel_count
+            FROM vessels
+            GROUP BY bin
+            ORDER BY bin
+            """,
+            [*params, min_len, max_len, min_len, computed_bins, computed_bins],
+        ).fetchall()
+    counts = [0] * computed_bins
+    for bin_idx, count in rows:
+        if bin_idx is not None and 0 <= int(bin_idx) < computed_bins:
+            counts[int(bin_idx)] = int(count)
+    edges = [min_len + (max_len - min_len) * i / computed_bins for i in range(computed_bins + 1)]
+    return {"bins": edges, "counts": counts}
+
+
+def density_grid(grid_res: float = 0.001, filters: QueryFilters | None = None) -> dict[str, Any]:
+    require_dataset()
+    # grid_res: 每格的经纬度跨度（度），约 0.0001°≈10m ~ 0.1°≈10km
+    grid_res = max(0.0001, min(float(grid_res), 0.5))
+    source, params = analysis_source(filters)
     with connect() as con:
         bounds = con.execute(
             f"""
             SELECT min(lon)::DOUBLE, max(lon)::DOUBLE, min(lat)::DOUBLE, max(lat)::DOUBLE
             FROM {source}
-            {where}
             """,
             params,
         ).fetchone()
         lon_min, lon_max, lat_min, lat_max = bounds
         if None in bounds or lon_min == lon_max or lat_min == lat_max:
-            return {"bounds": bounds, "bins": bins, "cells": []}
+            return {"bounds": bounds, "grid_size_x": 1, "grid_size_y": 1, "cells": []}
+
+        grid_size_x = max(1, ceil((lon_max - lon_min) / grid_res))
+        grid_size_y = max(1, ceil((lat_max - lat_min) / grid_res))
+        # 防止内存爆炸：单轴超过 8000 格时等比压缩
+        if max(grid_size_x, grid_size_y) > 8000:
+            factor = max(grid_size_x, grid_size_y) / 8000
+            grid_size_x = max(1, int(grid_size_x / factor))
+            grid_size_y = max(1, int(grid_size_y / factor))
 
         rows = con.execute(
             f"""
             WITH filtered AS (
                 SELECT lon, lat
                 FROM {source}
-                {where}
             )
             SELECT
                 least(CAST(floor((lon - ?) / NULLIF(? - ?, 0) * ?) AS INTEGER), ? - 1) AS x,
@@ -242,16 +358,8 @@ def density_grid(bins: int = 400, filters: QueryFilters | None = None) -> dict[s
             """,
             [
                 *params,
-                lon_min,
-                lon_max,
-                lon_min,
-                bins,
-                bins,
-                lat_min,
-                lat_max,
-                lat_min,
-                bins,
-                bins,
+                lon_min, lon_max, lon_min, grid_size_x, grid_size_x,
+                lat_min, lat_max, lat_min, grid_size_y, grid_size_y,
             ],
         ).fetchall()
     return {
@@ -261,7 +369,8 @@ def density_grid(bins: int = 400, filters: QueryFilters | None = None) -> dict[s
             "lat_min": lat_min,
             "lat_max": lat_max,
         },
-        "bins": bins,
+        "grid_size_x": grid_size_x,
+        "grid_size_y": grid_size_y,
         "cells": [{"x": int(x), "y": int(y), "count": int(count)} for x, y, count in rows],
     }
 

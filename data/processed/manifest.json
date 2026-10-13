@@ -1,6 +1,6 @@
 {
-  "source": "C:\\Users\\User\\Desktop\\CODEX\\AIS数据清洗及可视化\\cleaned_trajs_2401.pkl",
-  "parquet": "C:\\Users\\User\\Desktop\\CODEX\\AIS数据清洗及可视化\\data\\processed\\ais_points.parquet",
+  "source": "D:\\AIS系统开发\\AIS数据清洗及可视化\\cleaned_trajs_2401.pkl",
+  "parquet": "D:\\AIS系统开发\\AIS数据清洗及可视化\\data\\processed\\ais_points.parquet",
   "columns": [
     "mmsi",
     "timestamp",

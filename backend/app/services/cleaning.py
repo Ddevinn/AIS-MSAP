@@ -8,12 +8,16 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
-from backend.app.config import (
-    CLEANED_PARQUET_PATH,
-    CLEANING_MANIFEST_PATH,
-    PARQUET_PATH,
+from backend.app.services.dataset import (
+    active_dataset_id,
+    cleaned_parquet_path,
+    cleaning_manifest_path,
+    dataset_paths,
+    read_cleaning_manifest as read_dataset_cleaning_manifest,
+    read_manifest,
+    source_dataset_ready,
+    source_parquet_path,
 )
-from backend.app.services.dataset import read_manifest, source_dataset_ready
 from backend.app.services.query import connect, points_sql
 
 
@@ -44,18 +48,18 @@ def default_cleaning_config() -> CleaningConfig:
     return CleaningConfig()
 
 
-def cleaning_ready() -> bool:
-    return CLEANED_PARQUET_PATH.exists() and CLEANING_MANIFEST_PATH.exists()
+def cleaning_ready(dataset_id: str | None = None) -> bool:
+    cleaned_path = cleaned_parquet_path(dataset_id)
+    manifest_path = cleaning_manifest_path(dataset_id)
+    return cleaned_path.exists() and manifest_path.exists()
 
 
-def read_cleaning_manifest() -> dict[str, Any] | None:
-    if not CLEANING_MANIFEST_PATH.exists():
-        return None
-    return json.loads(CLEANING_MANIFEST_PATH.read_text(encoding="utf-8"))
+def read_cleaning_manifest(dataset_id: str | None = None) -> dict[str, Any] | None:
+    return read_dataset_cleaning_manifest(dataset_id)
 
 
-def reset_cleaning_result() -> None:
-    for path in (CLEANED_PARQUET_PATH, CLEANING_MANIFEST_PATH):
+def reset_cleaning_result(dataset_id: str | None = None) -> None:
+    for path in (cleaned_parquet_path(dataset_id), cleaning_manifest_path(dataset_id)):
         if path.exists():
             path.unlink()
 
@@ -63,21 +67,29 @@ def reset_cleaning_result() -> None:
 def run_cleaning(
     config: CleaningConfig | None = None,
     progress: ProgressCallback | None = None,
+    dataset_id: str | None = None,
 ) -> dict[str, Any]:
-    if not source_dataset_ready():
+    resolved_dataset_id = dataset_id or active_dataset_id()
+    paths = dataset_paths(resolved_dataset_id)
+    source_path = source_parquet_path(resolved_dataset_id)
+    output_path = cleaned_parquet_path(resolved_dataset_id)
+    manifest_path = cleaning_manifest_path(resolved_dataset_id)
+
+    if not source_dataset_ready(resolved_dataset_id):
         raise RuntimeError("Source Parquet is not ready. Run POST /api/build first.")
 
     config = config or default_cleaning_config()
     _validate_config(config)
-    CLEANED_PARQUET_PATH.parent.mkdir(parents=True, exist_ok=True)
-    for stale_path in (CLEANED_PARQUET_PATH,):
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    for stale_path in (output_path,):
         if stale_path.exists():
             stale_path.unlink()
 
     started = time.perf_counter()
     emit(progress, "preparing", "准备清洗任务", percent=3)
 
-    source = points_sql(PARQUET_PATH)
+    source = points_sql(source_path)
     with connect() as con:
         emit(progress, "validating", "校验字段范围和基础格式", percent=8)
         con.execute(_base_table_sql(source), _base_params(config))
@@ -114,7 +126,7 @@ def run_cleaning(
                 FROM cleaning_final
                 ORDER BY mmsi, timestamp, trajectory_id
             )
-            TO '{_sql_path(CLEANED_PARQUET_PATH)}'
+            TO '{_sql_path(output_path)}'
             (FORMAT PARQUET, COMPRESSION ZSTD)
             """
         )
@@ -124,13 +136,15 @@ def run_cleaning(
         ranges = _ranges(con)
 
     manifest = {
+        "dataset_id": resolved_dataset_id,
+        "dataset_name": paths.name,
         "data_role": "cleaned",
-        "source_parquet": str(PARQUET_PATH),
-        "parquet": str(CLEANED_PARQUET_PATH),
+        "source_parquet": str(source_path),
+        "parquet": str(output_path),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "elapsed_seconds": round(time.perf_counter() - started, 2),
         "config": config.model_dump(),
-        "source_manifest": read_manifest(),
+        "source_manifest": read_manifest(resolved_dataset_id),
         "counts": counts,
         "row_count": counts["output_rows"],
         "trajectory_count": ranges["trajectory_count"],
@@ -159,7 +173,7 @@ def run_cleaning(
             "nav_state",
         ],
     }
-    CLEANING_MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     emit(progress, "done", "清洗完成", manifest, percent=100)
     return manifest
 

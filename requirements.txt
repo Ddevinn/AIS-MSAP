@@ -9,3 +9,5 @@ matplotlib
 numpy
 mapbox-vector-tile
 shapely
+pillow
+requests

@@ -1,9 +1,11 @@
 {
+  "dataset_id": "default",
+  "dataset_name": "cleaned_trajs_2401",
   "data_role": "cleaned",
-  "source_parquet": "C:\\Users\\User\\Desktop\\CODEX\\AIS数据清洗及可视化\\data\\processed\\ais_points.parquet",
-  "parquet": "C:\\Users\\User\\Desktop\\CODEX\\AIS数据清洗及可视化\\data\\processed\\ais_points_cleaned.parquet",
-  "created_at": "2026-05-23T10:17:44.424970+00:00",
-  "elapsed_seconds": 87.95,
+  "source_parquet": "D:\\AIS系统开发\\AIS数据清洗及可视化\\data\\processed\\ais_points.parquet",
+  "parquet": "D:\\AIS系统开发\\AIS数据清洗及可视化\\data\\processed\\ais_points_cleaned.parquet",
+  "created_at": "2026-05-23T11:22:55.346275+00:00",
+  "elapsed_seconds": 81.6,
   "config": {
     "mmsi_min": 100000000,
     "mmsi_max": 999999999,
@@ -18,13 +20,14 @@
     "max_jump_speed_knots": 50.0,
     "max_acceleration_knots_per_min": 8.0,
     "max_time_gap_minutes": 60.0,
+    "max_segment_distance_nm": 3.0,
     "stop_speed_knots": 0.5,
     "low_speed_knots": 3.0,
     "remove_exact_duplicates": true
   },
   "source_manifest": {
-    "source": "C:\\Users\\User\\Desktop\\CODEX\\AIS数据清洗及可视化\\cleaned_trajs_2401.pkl",
-    "parquet": "C:\\Users\\User\\Desktop\\CODEX\\AIS数据清洗及可视化\\data\\processed\\ais_points.parquet",
+    "source": "D:\\AIS系统开发\\AIS数据清洗及可视化\\cleaned_trajs_2401.pkl",
+    "parquet": "D:\\AIS系统开发\\AIS数据清洗及可视化\\data\\processed\\ais_points.parquet",
     "columns": [
       "mmsi",
       "timestamp",
@@ -54,7 +57,10 @@
     "speed_range": {
       "speed_min": 0.0,
       "speed_max": 37.29999923706055
-    }
+    },
+    "dataset_id": "default",
+    "dataset_name": "cleaned_trajs_2401",
+    "data_role": "source"
   },
   "counts": {
     "raw_rows": 13929084,
@@ -68,12 +74,14 @@
     "invalid_time_order_rows": 0,
     "jump_point_rows": 0,
     "acceleration_point_rows": 42209,
-    "segment_break_rows": 13793,
+    "segment_break_rows": 14329,
+    "time_segment_break_rows": 10378,
+    "distance_segment_break_rows": 536,
     "output_rows": 13886874,
     "removed_rows": 42210
   },
   "row_count": 13886874,
-  "trajectory_count": 13793,
+  "trajectory_count": 14329,
   "vessel_count": 3415,
   "bounds": {
     "lon_min": 110.0886001586914,
@@ -101,6 +109,7 @@
     "width",
     "trajectory_id",
     "clean_segment_id",
+    "segment_break_reason",
     "time_delta_seconds",
     "distance_nm",
     "implied_speed_knots",

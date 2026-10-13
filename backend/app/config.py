@@ -7,10 +7,12 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 RAW_PKL_PATH = ROOT_DIR / "cleaned_trajs_2401.pkl"
 DATA_DIR = ROOT_DIR / "data"
 PROCESSED_DIR = DATA_DIR / "processed"
+DATASETS_DIR = DATA_DIR / "datasets"
 EXPORT_DIR = DATA_DIR / "exports"
 CACHE_DIR = DATA_DIR / "cache"
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
+DATASET_REGISTRY_PATH = DATASETS_DIR / "registry.json"
 PARQUET_PATH = PROCESSED_DIR / "ais_points.parquet"
 MANIFEST_PATH = PROCESSED_DIR / "manifest.json"
 CLEANED_PARQUET_PATH = PROCESSED_DIR / "ais_points_cleaned.parquet"
