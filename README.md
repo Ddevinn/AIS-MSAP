@@ -1,6 +1,84 @@
 # AIS Offline Cleaning and Visualization
 
-This application turns `cleaned_trajs_2401.pkl` into an analysis-ready Parquet table, then serves a local dashboard.
+This application imports Excel/CSV AIS tables and legacy PKL trajectories into
+an analysis-ready Parquet table, then serves a local dashboard.
+
+## Excel and CSV import
+
+In **加载数据 → 添加新的数据文件**, enter a local file path and use **预览字段映射**,
+then **添加这个文件**. Alternatively use **选择 Excel / CSV 文件** to upload a file.
+Click **加载数据** to build the normalized dataset; cleaning remains a separate action.
+
+- Supported tables: `.csv`, `.xlsx`, `.xls`. Empty Excel worksheets are ignored;
+  nonempty worksheets must have a header row and compatible AIS fields.
+- Required fields: MMSI, time, longitude, latitude, speed, and course over ground.
+- Optional fields: ship type, length, width, draught, and true heading.
+- Matching uses header names and aliases, ignoring case, whitespace, underscores,
+  and punctuation. Column order does not matter. Ambiguous aliases or missing
+  required columns produce an error rather than guessing.
+
+| Standard field | Customer sample | Other recognized names |
+|---|---|---|
+| `mmsi` | `mmsi` | `MMSI`, `vessel_mmsi`, `船舶编号` |
+| `timestamp` | `updatetime` | `update_time`, `datetime`, `时间`, `更新时间` |
+| `lon` / `lat` | `lon` / `lat` | `longitude` / `latitude`, `经度` / `纬度` |
+| `speed` | `speed` | `SOG`, `speed_over_ground`, `航速` |
+| `course` | `course` | `COG`, `course_over_ground`, `对地航向` |
+| `ship_type` | `type` | `shiptype`, `vessel_type`, `船型` |
+| `length` / `width` | `length` / `width` | `ship_length` / `beam`, `船长` / `船宽` |
+| `draught` | `draught` | `draft`, `吃水` |
+| `heading` | `heading` | `true_heading`, `船首向` |
+
+Date strings without a time zone use the selected import time zone, defaulting to
+`Asia/Shanghai` as confirmed for the customer's sample. Offset-bearing date
+strings retain their actual instant. Seconds, milliseconds, microseconds and
+nanoseconds since the Unix epoch are converted to integer Unix seconds.
+`course` and `heading` remain separate, and `draught`/`heading` survive cleaning.
+Speeds are assumed to be knots, angles degrees, and length/width/draught metres.
+
+CSV supports UTF-8 with/without BOM and GB18030/GBK. Automatic detection can be
+overridden in the import panel. `NULL`, `-`, empty cells and other common missing
+markers remain missing; unknown ship types use `-1`. Other unmapped columns are
+listed in preview metadata, and the original source file remains intact.
+
+The normalized manifest records source format, time zone, field mappings and
+numeric/date conversion errors. Invalid required values can be removed by the
+existing cleaning step. This import feature does not perform interpolation.
+
+## Git management and rollback
+
+Repository: https://github.com/Ddevinn/AIS-MSAP
+
+The tag `baseline-before-tabular-import-20261013` preserves the working platform
+before Excel/CSV changes. To compare code with that baseline:
+
+```powershell
+git diff baseline-before-tabular-import-20261013 HEAD
+```
+
+To restore baseline code, save any current uncommitted work first, then create a
+branch from the tag:
+
+```powershell
+git switch -c rollback-original baseline-before-tabular-import-20261013
+```
+
+Runtime datasets, registrations, manifests, uploads, exports, caches, virtual
+environments and credentials are kept locally and excluded from new code
+commits. The baseline tag retains the original tracked manifest/registry files.
+
+## Validation
+
+```powershell
+& '.\.venv\Scripts\python.exe' -m unittest discover -s tests -v
+```
+
+To also verify the customer's Excel file and its equivalent CSV locally:
+
+```powershell
+$env:AIS_SAMPLE_XLSX = 'D:\AIS系统开发\样例数据.xlsx'
+& '.\.venv\Scripts\python.exe' -m unittest discover -s tests -v
+```
 
 ## Windows quick start
 
@@ -23,7 +101,7 @@ python -m venv .venv
 the dependency versions verified on this Windows computer. The map libraries,
 chart library, and OpenStreetMap base map currently require an internet connection.
 
-## Current data contract
+## Legacy PKL data contract
 
 The pickle file is expected to be a list of NumPy arrays. Each array has 9 columns:
 

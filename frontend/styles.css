@@ -436,3 +436,7 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
   .marker-type-grid { grid-template-columns: repeat(2,1fr); }
   .map-card { padding: 10px; }
 }
+.import-mapping { padding: 12px; border-radius: 10px; background: #f1f5f9; font-size: 12px; }
+.import-mapping > small { display: block; margin: 5px 0 8px; color: #64748b; }
+.import-mapping > div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }
+.import-mapping p { color: #92400e; margin: 8px 0 0; }

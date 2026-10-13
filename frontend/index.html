@@ -6,7 +6,7 @@
     <title>AIS 船舶轨迹分析工作台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20260713-measure-tool" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261013-tabular-import" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -73,8 +73,13 @@
               <summary>添加新的数据文件</summary>
               <div class="details-body">
                 <label class="field">数据名称<input id="datasetNameInput" type="text" placeholder="例如：2024 年 1 月船舶数据" /></label>
-                <label class="field">数据文件位置<input id="datasetPathInput" type="text" placeholder="D:\data\船舶数据文件" /></label>
-                <button id="addDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-file-plus" /></svg>添加这个文件</button>
+                <label class="field">数据文件位置<input id="datasetPathInput" type="text" placeholder="D:\data\船舶数据.xlsx / .csv / .pkl" /></label>
+                <label class="field">无时区日期的时区<select id="importTimezoneSelect"><option value="Asia/Shanghai">北京时间（Asia/Shanghai）</option><option value="UTC">UTC</option></select></label>
+                <label class="field">CSV 编码<select id="importEncodingSelect"><option value="auto">自动识别 UTF-8 / GB18030</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select></label>
+                <div class="button-row"><button id="previewDatasetBtn" class="btn ghost">预览字段映射</button><button id="addDatasetBtn" class="btn dark">添加这个文件</button></div>
+                <input id="datasetFileInput" type="file" accept=".csv,.xlsx,.xls" hidden />
+                <button id="uploadDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>选择 Excel / CSV 文件</button>
+                <div id="importMappingPanel" class="import-mapping" hidden></div>
               </div>
             </details>
             <button id="buildBtn" class="btn primary full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>加载数据</button>
@@ -324,6 +329,6 @@
 
     <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="/static/app.js?v=20260715-behavior-segments"></script>
+    <script src="/static/app.js?v=20261013-tabular-import"></script>
   </body>
 </html>

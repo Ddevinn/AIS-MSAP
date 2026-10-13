@@ -33,6 +33,7 @@ let lengthChart = null;
 
 function shipTypeName(code) {
   const n = Number(code);
+  if (n === -1 || !Number.isFinite(n)) return "未知类型";
   if (n >= 20 && n <= 29) return "翄地船";
   if (n === 30) return "渔船";
   if (n === 31 || n === 32) return "拖轮";
@@ -65,6 +66,9 @@ window.addEventListener("DOMContentLoaded", () => {
   $("selectDatasetBtn").addEventListener("click", selectDataset);
   $("reloadDatasetsBtn").addEventListener("click", loadDatasets);
   $("addDatasetBtn").addEventListener("click", addDataset);
+  $("previewDatasetBtn").addEventListener("click", previewDataset);
+  $("uploadDatasetBtn").addEventListener("click", () => $("datasetFileInput").click());
+  $("datasetFileInput").addEventListener("change", uploadDataset);
   $("refreshBtn").addEventListener("click", loadAll);
   $("runCleanBtn").addEventListener("click", runCleaning);
   $("resetCleanBtn").addEventListener("click", resetCleaning);
@@ -189,18 +193,77 @@ async function addDataset() {
     return;
   }
   $("jobText").textContent = "正在添加数据文件";
-  await postJson("/api/datasets/register", {
-    name,
-    source_path: sourcePath,
-    make_active: true,
-  });
-  $("datasetNameInput").value = "";
-  $("datasetPathInput").value = "";
-  state.activeKey = "";
-  state.mapFitted = false;
-  await pollStatus();
-  loadAll();
-  refreshTrackTiles();
+  try {
+    await postJson("/api/datasets/register", {
+      name,
+      source_path: sourcePath,
+      make_active: true,
+      ...importOptions(),
+    });
+    $("datasetNameInput").value = "";
+    $("datasetPathInput").value = "";
+    state.activeKey = "";
+    state.mapFitted = false;
+    state.filters = {};
+    await pollStatus();
+    $("jobText").textContent = "文件已添加，点击“加载数据”转换为可分析格式";
+  } catch (error) {
+    $("jobText").textContent = error.message;
+  }
+}
+
+function importOptions() {
+  return {
+    source_timezone: $("importTimezoneSelect").value,
+    csv_encoding: $("importEncodingSelect").value,
+  };
+}
+
+async function previewDataset() {
+  const path = $("datasetPathInput").value.trim();
+  if (!path) { $("jobText").textContent = "请输入 Excel 或 CSV 文件位置"; return; }
+  try {
+    $("jobText").textContent = "正在识别表头和时间字段";
+    const data = await postJson("/api/datasets/preview", { source_path: path, ...importOptions() });
+    renderImportMapping(data);
+    $("jobText").textContent = "字段识别完成，可以添加并加载数据";
+  } catch (error) {
+    $("importMappingPanel").hidden = true;
+    $("jobText").textContent = error.message;
+  }
+}
+
+function renderImportMapping(data) {
+  const panel = $("importMappingPanel");
+  panel.hidden = false;
+  const entries = Object.entries(data.mapping || {});
+  panel.innerHTML = `<b>识别结果</b><small>${escapeHtml(data.sheet || "")} · ${escapeHtml(data.source_timezone || "")}</small>`
+    + entries.map(([field, column]) => `<div><span>${escapeHtml(column)}</span><span>→ ${escapeHtml(data.field_labels?.[field] || field)} (${escapeHtml(field)})</span></div>`).join("")
+    + (data.warnings || []).map((warning) => `<p>${escapeHtml(warning)}</p>`).join("");
+}
+
+async function uploadDataset() {
+  const file = $("datasetFileInput").files[0];
+  if (!file) return;
+  const button = $("uploadDatasetBtn");
+  button.disabled = true;
+  try {
+    $("jobText").textContent = "正在上传并识别文件";
+    const form = new FormData();
+    form.append("file", file);
+    form.append("name", $("datasetNameInput").value.trim());
+    Object.entries(importOptions()).forEach(([key, value]) => form.append(key, value));
+    const response = await fetch("/api/datasets/upload", { method: "POST", body: form });
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "上传失败");
+    renderImportMapping(data.preview);
+    state.activeKey = "";
+    state.mapFitted = false;
+    state.filters = {};
+    await pollStatus();
+    $("jobText").textContent = "文件已添加，点击“加载数据”转换为可分析格式";
+  } catch (error) { $("jobText").textContent = error.message; }
+  finally { button.disabled = false; $("datasetFileInput").value = ""; }
 }
 
 async function pollStatus() {
