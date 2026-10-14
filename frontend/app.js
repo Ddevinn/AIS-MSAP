@@ -65,7 +65,34 @@ function shipTypeName(code) {
   return `类型${code}`;
 }
 
+function setupInfoPopover() {
+  const button = $("resultsInfoButton");
+  const popover = $("resultsInfoPopover");
+  if (!button || !popover) return;
+
+  const close = () => {
+    popover.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+  };
+
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const shouldOpen = popover.hidden;
+    popover.hidden = !shouldOpen;
+    button.setAttribute("aria-expanded", String(shouldOpen));
+  });
+  popover.addEventListener("click", (event) => event.stopPropagation());
+  document.addEventListener("click", close);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !popover.hidden) {
+      close();
+      button.focus();
+    }
+  });
+}
+
 window.addEventListener("DOMContentLoaded", async () => {
+  setupInfoPopover();
   try { await AIS.initialize(); } catch { return; }
   $("accountIdentity").textContent = AIS.user.display_name;
   $("adminEntry").hidden = AIS.user.role !== "superadmin";

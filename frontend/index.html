@@ -3,10 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AIS 船舶轨迹分析工作台</title>
+    <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261014-basemap-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261014-ui-1" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -45,10 +45,7 @@
       <header class="topbar">
         <div class="brand">
           <span class="brand-mark"><svg class="ui-icon brand-icon" aria-hidden="true"><use href="#i-ship" /></svg></span>
-          <div>
-            <h1>船舶轨迹分析工作台</h1>
-            <p>加载数据 → 清洗数据 → 查看船舶轨迹和统计结果</p>
-          </div>
+          <h1>AIS数据分析与态势评估平台</h1>
         </div>
         <div class="topbar-actions">
           <span id="accountIdentity" class="account-identity"></span>
@@ -65,7 +62,7 @@
         <aside class="sidebar">
           <section class="side-card load-card">
             <div class="card-heading">
-              <div class="heading-group"><span class="section-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-database" /></svg></span><div><span class="eyebrow">第 1 步</span><h2>加载数据</h2></div></div>
+              <div class="heading-group"><span class="section-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-database" /></svg></span><h2>加载数据</h2></div>
               <div class="card-heading-actions"><button id="reloadDatasetsBtn" class="icon-btn" title="刷新数据列表"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg></button><button class="collapse-btn" type="button" data-collapse-card aria-expanded="true" title="收起加载数据"><svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg></button></div>
             </div>
             <div class="current-dataset"><span>当前数据</span><strong id="currentDatasetName">尚未选择数据</strong><p id="emptyDatasetHint">从历史记录继续分析，或新增一个数据文件。</p><button id="clearDatasetBtn" type="button" class="account-link" hidden>清空当前选择</button></div>
@@ -138,7 +135,7 @@
 
           <section class="side-card cleaning-card">
             <div class="card-heading">
-              <div class="heading-group"><span class="section-icon green"><svg class="ui-icon" aria-hidden="true"><use href="#i-broom" /></svg></span><div><span class="eyebrow">第 2 步</span><h2>清洗数据</h2></div></div>
+              <div class="heading-group"><span class="section-icon green"><svg class="ui-icon" aria-hidden="true"><use href="#i-broom" /></svg></span><h2>清洗数据</h2></div>
               <div class="card-heading-actions"><span class="card-badge success">自动检查</span><button class="collapse-btn" type="button" data-collapse-card aria-expanded="true" title="收起清洗数据"><svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg></button></div>
             </div>
             <details class="compact-details">
@@ -171,7 +168,7 @@
         <section class="main-content">
           <section class="overview-card">
             <div class="overview-title">
-              <div class="heading-group"><span class="section-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-chart" /></svg></span><div><span class="eyebrow">第 3 步</span><h2>查看结果</h2></div></div>
+              <div class="heading-group"><span class="section-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-chart" /></svg></span><div class="heading-label-row"><h2>查看结果</h2><button id="resultsInfoButton" class="info-button" type="button" aria-label="查看结果说明" aria-controls="resultsInfoPopover" aria-expanded="false">i</button><div id="resultsInfoPopover" class="info-popover" role="note" hidden>这里展示当前数据完成清洗后的统计结果和分析图表。</div></div></div>
               <p id="datasetMeta">等待加载数据</p>
             </div>
             <div id="metrics" class="metric-grid"></div>
@@ -388,7 +385,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261014-basemap-1"></script>
+    <script src="/static/app.js?v=20261014-ui-1"></script>
     <script src="/static/density.js?v=20261014-accounts-1"></script>
   </body>
 </html>

@@ -39,10 +39,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("authDescription").textContent = "超级管理员可以管理账号、登录记录和访问会话。";
     byId("authSubmit").textContent = "登录管理后台";
     byId("alternateLogin").href = "/login";
-    byId("alternateLogin").textContent = "进入分析工作台";
+    byId("alternateLogin").textContent = "进入分析平台";
     byId("authHint").textContent = "此入口仅向超级管理员开放。";
   }
-  document.title = `${byId("authTitle").textContent} · AIS`;
+  document.title = `${byId("authTitle").textContent} · AIS数据分析与态势评估平台`;
   byId("authForm").addEventListener("submit", async event => {
     event.preventDefault();
     const error = byId("authError"), button = byId("authSubmit");

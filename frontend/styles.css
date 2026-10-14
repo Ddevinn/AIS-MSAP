@@ -94,8 +94,7 @@ h1, h2, h3, p { margin: 0; }
   box-shadow: 0 10px 22px rgba(37, 99, 235, 0.28);
 }
 .brand-icon { width: 25px; height: 25px; stroke-width: 1.7; }
-.brand h1 { font-size: 19px; letter-spacing: -0.02em; }
-.brand p { margin-top: 3px; color: var(--muted); font-size: 12px; }
+.brand h1 { font-size: 19px; letter-spacing: -0.02em; white-space: nowrap; }
 .topbar-actions { gap: 10px; }
 
 .status-pill, .card-badge {
@@ -159,6 +158,19 @@ h1, h2, h3, p { margin: 0; }
 .chart-icon.orange { color: #d97706; background: #fff5e6; }
 .card-heading h2, .overview-title h2, .map-card-head h2 { margin-top: 2px; font-size: 16px; }
 .eyebrow { color: #2e7fca; font-size: 9px; font-weight: 800; letter-spacing: .16em; }
+.heading-label-row { position: relative; display: flex; align-items: center; gap: 7px; }
+.info-button {
+  display: grid; width: 18px; height: 18px; flex: 0 0 auto; place-items: center; padding: 0;
+  border: 1px solid rgba(8,145,178,.34); border-radius: 50%; color: #087f9b; background: #e8f8fb;
+  font-family: Georgia, serif; font-size: 12px; font-weight: 700; line-height: 1;
+}
+.info-button:hover, .info-button:focus-visible, .info-button[aria-expanded="true"] { color: #fff; border-color: var(--cyan); background: var(--cyan); outline: 0; box-shadow: 0 0 0 3px rgba(8,145,178,.13); }
+.info-popover {
+  position: absolute; z-index: 50; top: calc(100% + 9px); left: 0; width: 250px; padding: 10px 12px;
+  border: 1px solid #c9e4ec; border-radius: 9px; color: #29475a; background: #f4fcfe;
+  box-shadow: 0 12px 30px rgba(20,67,91,.16); font-size: 11px; font-weight: 500; line-height: 1.7;
+}
+.info-popover::before { content: ""; position: absolute; top: -5px; left: 90px; width: 8px; height: 8px; border-top: 1px solid #c9e4ec; border-left: 1px solid #c9e4ec; background: #f4fcfe; transform: rotate(45deg); }
 .card-badge { padding: 4px 8px; border: 0; color: #27689e; background: #edf6fd; font-size: 10px; }
 .card-badge.success { color: #08765f; background: #e9faf5; }
 
