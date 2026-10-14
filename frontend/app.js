@@ -65,6 +65,52 @@ function shipTypeName(code) {
   return `类型${code}`;
 }
 
+function setupAccountMenu() {
+  const wrapper = $("accountMenuWrap");
+  const button = $("accountMenuBtn");
+  const menu = $("accountMenu");
+  const items = () => [...menu.querySelectorAll("a:not([hidden]), button:not([hidden])")];
+  const setOpen = (open) => {
+    menu.hidden = !open;
+    button.setAttribute("aria-expanded", String(open));
+  };
+
+  button.disabled = false;
+  button.addEventListener("click", () => setOpen(menu.hidden));
+  button.addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
+    event.preventDefault();
+    setOpen(true);
+    const entries = items();
+    (event.key === "ArrowDown" ? entries[0] : entries.at(-1))?.focus();
+  });
+  menu.addEventListener("click", (event) => {
+    if (event.target.closest("a, button")) setOpen(false);
+  });
+  menu.addEventListener("keydown", (event) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const entries = items();
+    const current = entries.indexOf(document.activeElement);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? entries.length - 1
+      : (current + (event.key === "ArrowDown" ? 1 : -1) + entries.length) % entries.length;
+    entries[next]?.focus();
+  });
+  wrapper.addEventListener("focusout", (event) => {
+    if (!wrapper.contains(event.relatedTarget)) setOpen(false);
+  });
+  document.addEventListener("click", (event) => {
+    if (!wrapper.contains(event.target)) setOpen(false);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !menu.hidden) {
+      event.preventDefault();
+      setOpen(false);
+      button.focus();
+    }
+  });
+}
+
 function setupInfoPopover() {
   const button = $("resultsInfoButton");
   const popover = $("resultsInfoPopover");
@@ -94,8 +140,12 @@ function setupInfoPopover() {
 window.addEventListener("DOMContentLoaded", async () => {
   setupInfoPopover();
   try { await AIS.initialize(); } catch { return; }
-  $("accountIdentity").textContent = AIS.user.display_name;
+  $("accountIdentity").textContent = AIS.user.username;
+  $("accountMenuBtn").title = AIS.user.username;
+  $("accountDisplayName").textContent = AIS.user.display_name || AIS.user.username;
+  $("accountRole").textContent = AIS.user.role === "superadmin" ? "超级管理员" : "普通用户";
   $("adminEntry").hidden = AIS.user.role !== "superadmin";
+  setupAccountMenu();
   document.querySelectorAll("[data-local-import]").forEach(element => { element.hidden = AIS.user.role !== "superadmin"; });
   $("logoutBtn").addEventListener("click", async () => {
     clearInterval(state.statusTimer);
@@ -360,12 +410,6 @@ async function pollStatus() {
     ["runCleanBtn", "resetCleanBtn", "reportExcelBtn", "refreshBtn", "reportRefreshBtn", "applyBtn", "clearBtn",
       "applyDirectionMmsiBtn", "fitMapBtn", "reloadTracksBtn", "grainSelect", "speedBinWidthSelect", "lengthBinWidthSelect",
       "directionBinWidthSelect", "headingBinWidthSelect"].forEach(id => { $(id).disabled = !data.dataset_ready; });
-    $("statusText").textContent = data.cleaned_dataset_ready
-      ? "数据已清洗，可以查看"
-      : data.dataset_ready
-        ? "数据已加载，可以查看"
-        : "等待加载数据";
-
     const job = !data.build_job?.dataset_id || data.build_job.dataset_id === data.active_dataset_id
       ? data.build_job || {} : {};
     $("jobText").textContent = formatJob(job, job.progress || {});
@@ -409,7 +453,6 @@ async function pollStatus() {
       loadAll();
     }
   } catch (error) {
-    $("statusText").textContent = "服务未就绪";
     $("jobText").textContent = error.message;
     $("cleanJobText").textContent = error.message;
   }
