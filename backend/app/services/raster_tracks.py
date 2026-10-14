@@ -6,12 +6,14 @@ import json
 import math
 import os
 import threading
+import uuid
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 from backend.app.config import CACHE_DIR
+from backend.app.context import dataset_context
 from backend.app.services.analysis import require_dataset
 from backend.app.services.dataset import active_parquet_path, read_active_manifest
 from backend.app.services.query import QueryFilters, connect, trajectory_column, trajectory_source, where_clause
@@ -238,7 +240,9 @@ def _data_signature() -> str:
     path = active_parquet_path()
     stat = path.stat()
     manifest = read_active_manifest() or {}
-    return f"{manifest.get('dataset_id')}:{manifest.get('data_role')}:{stat.st_size}:{stat.st_mtime_ns}"
+    context = dataset_context.get()
+    owner = context.owner_id if context else "legacy"
+    return f"{owner}:{path.resolve()}:{manifest.get('dataset_id')}:{manifest.get('data_role')}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
 def _disk_path(key: tuple[object, ...], version: str = CACHE_VERSION) -> Path:
@@ -261,7 +265,7 @@ def _recolor_legacy_tile(path: Path) -> bytes:
 
 def _write_cache(path: Path, png: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    temporary = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
     temporary.write_bytes(png)
     temporary.replace(path)
 

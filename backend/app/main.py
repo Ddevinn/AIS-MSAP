@@ -3,18 +3,21 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
+from contextvars import copy_context
+from dataclasses import replace
 from pathlib import Path
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from backend.app.config import DATA_DIR, FRONTEND_DIR
+from backend.app.auth import install_security, require_admin
+from backend.app.context import ScopedJob, dataset_context
+from backend.app import storage
 from backend.app.services.analysis import (
     behavior_distribution,
     length_distribution,
@@ -63,13 +66,7 @@ from backend.app.services.raster_tracks import (
 app = FastAPI(title="AIS Offline Cleaning and Visualization")
 TRACK_RENDER_WORKERS = min(4, max(2, (os.cpu_count() or 4) // 2))
 _track_render_pool: ThreadPoolExecutor | None = None
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+install_security(app)
 
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
@@ -84,26 +81,30 @@ def _render_pool() -> ThreadPoolExecutor:
 
 @app.on_event("shutdown")
 def shutdown_render_pool() -> None:
+    global _track_render_pool
     if _track_render_pool is not None:
         _track_render_pool.shutdown(wait=True, cancel_futures=True)
+        _track_render_pool = None
 
 _build_lock = threading.Lock()
-_build_job: dict[str, object] = {
-    "status": "idle",
-    "message": "",
-    "started_at": None,
-    "finished_at": None,
-    "progress": {},
-}
+_build_job = ScopedJob("build")
 
 _clean_lock = threading.Lock()
-_clean_job: dict[str, object] = {
-    "status": "idle",
-    "message": "",
-    "started_at": None,
-    "finished_at": None,
-    "progress": {},
-}
+_clean_job = ScopedJob("clean")
+_work_slots = threading.BoundedSemaphore(2)
+
+
+def _start_job(function, args, job: ScopedJob) -> None:
+    if not _work_slots.acquire(blocking=False):
+        job.update(status="idle", message="服务器已有两个数据处理任务，请稍后重试。")
+        raise HTTPException(429, "服务器正在处理其他任务，请稍后重试。")
+    context = copy_context()
+    def run():
+        try:
+            context.run(function, *args)
+        finally:
+            _work_slots.release()
+    threading.Thread(target=run, daemon=True).start()
 
 
 class DatasetRegisterRequest(BaseModel):
@@ -163,21 +164,21 @@ def index() -> FileResponse:
 
 @app.get("/api/status")
 def status() -> dict[str, object]:
-    paths = dataset_paths()
+    paths = dataset_paths() if active_dataset_id() else None
     return {
         "active_dataset_id": active_dataset_id(),
         "datasets": list_datasets(),
         "dataset_ready": dataset_ready(),
         "source_dataset_ready": source_dataset_ready(),
         "cleaned_dataset_ready": cleaned_dataset_ready(),
-        "source_exists": paths.source_path.exists(),
-        "source_path": str(paths.source_path),
+        "source_exists": paths.source_path.exists() if paths else False,
+        "source_path": str(paths.source_path) if paths else None,
         "manifest": read_manifest(),
         "active_manifest": read_active_manifest(),
-        "active_parquet": str(active_parquet_path()),
+        "active_parquet": str(active_parquet_path()) if paths else None,
         "cleaning_manifest": read_cleaning_manifest(),
-        "build_job": _build_job,
-        "clean_job": _clean_job,
+        "build_job": _build_job.snapshot(),
+        "clean_job": _clean_job.snapshot(),
     }
 
 
@@ -190,7 +191,8 @@ def api_datasets() -> dict[str, object]:
 
 
 @app.post("/api/datasets/register")
-def api_register_dataset(payload: DatasetRegisterRequest) -> dict[str, object]:
+def api_register_dataset(payload: DatasetRegisterRequest, request: Request) -> dict[str, object]:
+    require_admin(request)
     try:
         with _build_lock, _clean_lock:
             if _build_job["status"] == "running" or _clean_job["status"] == "running":
@@ -217,7 +219,8 @@ def api_register_dataset(payload: DatasetRegisterRequest) -> dict[str, object]:
 
 
 @app.post("/api/datasets/preview")
-def api_preview_dataset(payload: DatasetRegisterRequest) -> dict[str, object]:
+def api_preview_dataset(payload: DatasetRegisterRequest, request: Request) -> dict[str, object]:
+    require_admin(request)
     from backend.app.services.ingestion import inspect_tabular
     source = Path(payload.source_path).expanduser().resolve()
     if not source.is_file():
@@ -244,7 +247,8 @@ async def api_upload_dataset(
         validate_options(source_timezone, csv_encoding)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    directory = DATA_DIR / "uploads" / uuid.uuid4().hex
+    context = dataset_context.get()
+    directory = DATA_DIR / "uploads" / f"user_{context.owner_id}" / uuid.uuid4().hex
     source = directory / filename
     try:
         directory.mkdir(parents=True, exist_ok=False)
@@ -288,6 +292,15 @@ def api_select_dataset(dataset_id: str) -> dict[str, object]:
         }
 
 
+@app.post("/api/datasets/clear")
+def api_clear_dataset() -> dict[str, object]:
+    context = dataset_context.get()
+    with storage.connection() as con:
+        con.execute("UPDATE sessions SET active_dataset_id=NULL WHERE token_hash=?", (context.session_hash,))
+    dataset_context.set(replace(context, dataset_id=None))
+    return {"active_dataset_id": None}
+
+
 @app.delete("/api/datasets/{dataset_id}")
 def api_unregister_dataset(dataset_id: str) -> dict[str, object]:
     with _build_lock, _clean_lock:
@@ -311,18 +324,22 @@ def api_unregister_dataset(dataset_id: str) -> dict[str, object]:
 def inspect() -> dict[str, object]:
     try:
         return inspect_pickle()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/build")
 def build(force: bool = False) -> dict[str, object]:
-    with _build_lock:
-        if _build_job["status"] == "running":
-            return {"accepted": False, "job": _build_job}
+    with _build_lock, _clean_lock:
+        if _build_job["status"] == "running" or _clean_job["status"] == "running":
+            raise HTTPException(409, "当前账号有数据处理任务正在运行。")
         dataset_id = active_dataset_id()
+        if not dataset_id:
+            raise HTTPException(409, "请先选择历史数据或新增文件。")
         if source_dataset_ready() and not force:
-            return {"accepted": False, "job": _build_job, "manifest": read_manifest()}
+            return {"accepted": False, "job": _build_job.snapshot(), "manifest": read_manifest()}
 
         _build_job.update(
             {
@@ -334,9 +351,8 @@ def build(force: bool = False) -> dict[str, object]:
                 "dataset_id": dataset_id,
             }
         )
-        thread = threading.Thread(target=_run_build, args=(force, dataset_id), daemon=True)
-        thread.start()
-        return {"accepted": True, "job": _build_job}
+        _start_job(_run_build, (force, dataset_id), _build_job)
+        return {"accepted": True, "job": _build_job.snapshot()}
 
 
 @app.get("/api/cleaning/defaults")
@@ -349,16 +365,18 @@ def api_cleaning_status() -> dict[str, object]:
     return {
         "cleaned_dataset_ready": cleaned_dataset_ready(),
         "manifest": read_cleaning_manifest(),
-        "job": _clean_job,
+        "job": _clean_job.snapshot(),
     }
 
 
 @app.post("/api/cleaning/run")
 def api_run_cleaning(config: CleaningConfig | None = None) -> dict[str, object]:
-    with _clean_lock:
-        if _clean_job["status"] == "running":
-            return {"accepted": False, "job": _clean_job}
+    with _build_lock, _clean_lock:
+        if _build_job["status"] == "running" or _clean_job["status"] == "running":
+            raise HTTPException(409, "当前账号有数据处理任务正在运行。")
         dataset_id = active_dataset_id()
+        if not dataset_id or not source_dataset_ready():
+            raise HTTPException(409, "请先加载数据。")
 
         _clean_job.update(
             {
@@ -370,16 +388,17 @@ def api_run_cleaning(config: CleaningConfig | None = None) -> dict[str, object]:
                 "dataset_id": dataset_id,
             }
         )
-        thread = threading.Thread(target=_run_cleaning, args=(config or default_cleaning_config(), dataset_id), daemon=True)
-        thread.start()
-        return {"accepted": True, "job": _clean_job}
+        _start_job(_run_cleaning, (config or default_cleaning_config(), dataset_id), _clean_job)
+        return {"accepted": True, "job": _clean_job.snapshot()}
 
 
 @app.post("/api/cleaning/reset")
 def api_reset_cleaning() -> dict[str, object]:
-    with _clean_lock:
-        if _clean_job["status"] == "running":
+    with _build_lock, _clean_lock:
+        if _clean_job["status"] == "running" or _build_job["status"] == "running":
             return {"accepted": False, "message": "Cleaning is running"}
+        if not active_dataset_id():
+            raise HTTPException(409, "请先选择数据。")
         reset_cleaning_result(active_dataset_id())
         clear_track_tile_cache()
         _clean_job.update(
@@ -460,6 +479,8 @@ def api_density_grid(
 def api_density_png(grid_res: float = 0.001, filters: QueryFilters = Depends(parse_filters)) -> Response:
     try:
         return Response(content=density_png(grid_res=grid_res, filters=filters), media_type="image/png")
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -476,20 +497,22 @@ async def api_rendered_track_tiles(
         worker = "cache"
         if tile is None:
             tile, worker_id = await asyncio.get_running_loop().run_in_executor(
-                _render_pool(), render_track_tile_job, z, x, y, filters
+                _render_pool(), copy_context().run, render_track_tile_job, z, x, y, filters
             )
             worker = str(worker_id)
         return Response(
             content=tile,
             media_type="image/png",
             headers={
-                "Cache-Control": "public, max-age=86400, immutable",
+                "Cache-Control": "no-store",
                 "X-Track-Render": "cache" if worker == "cache" else "threaded",
                 "X-Track-Worker": worker,
                 "X-Track-Thread": worker,
                 "X-Track-Workers": str(TRACK_RENDER_WORKERS),
             },
         )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -510,6 +533,8 @@ def api_export_excel(direction_bin_width: int = 15, filters: QueryFilters = Depe
     try:
         path = export_excel(filters=filters, direction_bin_width=direction_bin_width)
         return FileResponse(path, filename=Path(path).name)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -538,9 +563,6 @@ def _run_build(force: bool, dataset_id: str) -> None:
                 "finished_at": datetime.now().isoformat(timespec="seconds"),
             }
         )
-    finally:
-        if source_dataset_ready(dataset_id):
-            time.sleep(0.1)
 
 
 def _run_cleaning(config: CleaningConfig, dataset_id: str) -> None:

@@ -6,7 +6,7 @@
     <title>AIS 船舶轨迹分析工作台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261013-density-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261014-accounts-1" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -51,6 +51,10 @@
           </div>
         </div>
         <div class="topbar-actions">
+          <span id="accountIdentity" class="account-identity"></span>
+          <a id="adminEntry" class="btn ghost" href="/admin" hidden>用户管理</a>
+          <a class="account-link" href="/account/password">修改密码</a>
+          <button id="logoutBtn" class="btn ghost">退出登录</button>
           <span id="statusText" class="status-pill"><i></i>正在检查数据</span>
           <button id="reportExcelBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg>导出统计表</button>
           <button id="refreshBtn" class="btn primary"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>刷新统计</button>
@@ -64,19 +68,17 @@
               <div class="heading-group"><span class="section-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-database" /></svg></span><div><span class="eyebrow">第 1 步</span><h2>加载数据</h2></div></div>
               <div class="card-heading-actions"><button id="reloadDatasetsBtn" class="icon-btn" title="刷新数据列表"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg></button><button class="collapse-btn" type="button" data-collapse-card aria-expanded="true" title="收起加载数据"><svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg></button></div>
             </div>
-            <label class="field">当前数据
-              <select id="datasetSelect"></select>
-            </label>
-            <button id="selectDatasetBtn" class="btn dark full"><svg class="ui-icon" aria-hidden="true"><use href="#i-database" /></svg>使用所选数据</button>
-            <div id="datasetList" class="dataset-list"></div>
-            <details class="compact-details">
-              <summary>添加新的数据文件</summary>
+            <div class="current-dataset"><span>当前数据</span><strong id="currentDatasetName">尚未选择数据</strong><p id="emptyDatasetHint">从历史记录继续分析，或新增一个数据文件。</p><button id="clearDatasetBtn" type="button" class="account-link" hidden>清空当前选择</button></div>
+            <div class="load-entry-row"><button id="historyToggleBtn" class="btn ghost" type="button" aria-expanded="false">历史数据 <span id="historyCount">0</span></button><button id="newDatasetBtn" class="btn dark" type="button">＋ 新增文件</button></div>
+            <div id="datasetHistoryPanel" hidden><label class="field">查找历史数据<input id="datasetSearchInput" type="search" placeholder="输入数据名称或文件名" /></label><select id="datasetSelect" hidden></select><button id="selectDatasetBtn" type="button" hidden>使用所选数据</button><div id="datasetList" class="dataset-list"></div></div>
+            <details id="newDatasetDetails" class="compact-details">
+              <summary>新增数据文件</summary>
               <div class="details-body">
                 <label class="field">数据名称<input id="datasetNameInput" type="text" placeholder="例如：2024 年 1 月船舶数据" /></label>
-                <label class="field">数据文件位置<input id="datasetPathInput" type="text" placeholder="D:\data\船舶数据.xlsx / .csv / .pkl" /></label>
+                <div data-local-import hidden><label class="field">本机文件位置（管理员）<input id="datasetPathInput" type="text" placeholder="D:\data\船舶数据.xlsx / .csv / .pkl" /></label></div>
                 <label class="field">无时区日期的时区<select id="importTimezoneSelect"><option value="Asia/Shanghai">北京时间（Asia/Shanghai）</option><option value="UTC">UTC</option></select></label>
                 <label class="field">CSV 编码<select id="importEncodingSelect"><option value="auto">自动识别 UTF-8 / GB18030</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select></label>
-                <div class="button-row"><button id="previewDatasetBtn" class="btn ghost">预览字段映射</button><button id="addDatasetBtn" class="btn dark">添加这个文件</button></div>
+                <div data-local-import hidden><div class="button-row"><button id="previewDatasetBtn" class="btn ghost">预览字段映射</button><button id="addDatasetBtn" class="btn dark">添加这个文件</button></div></div>
                 <input id="datasetFileInput" type="file" accept=".csv,.xlsx,.xls" hidden />
                 <button id="uploadDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>选择 Excel / CSV 文件</button>
                 <div id="importMappingPanel" class="import-mapping" hidden></div>
@@ -383,7 +385,8 @@
 
     <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="/static/app.js?v=20261013-density-1"></script>
-    <script src="/static/density.js?v=20261013-density-1"></script>
+    <script src="/static/session.js?v=20261014-1"></script>
+    <script src="/static/app.js?v=20261014-accounts-1"></script>
+    <script src="/static/density.js?v=20261014-accounts-1"></script>
   </body>
 </html>

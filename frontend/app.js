@@ -9,6 +9,8 @@ const state = {
   manifest: null,
   activeKey: "",
   activeDatasetId: "",
+  historyDatasets: [],
+  statusRequestId: 0,
   markers: [],
   markerType: "point",
   areaShape: "polygon",
@@ -63,7 +65,32 @@ function shipTypeName(code) {
   return `类型${code}`;
 }
 
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
+  try { await AIS.initialize(); } catch { return; }
+  $("accountIdentity").textContent = AIS.user.display_name;
+  $("adminEntry").hidden = AIS.user.role !== "superadmin";
+  document.querySelectorAll("[data-local-import]").forEach(element => { element.hidden = AIS.user.role !== "superadmin"; });
+  $("logoutBtn").addEventListener("click", async () => {
+    clearInterval(state.statusTimer);
+    clearDatasetResults();
+    state.manifest = null;
+    state.activeDatasetId = "";
+    state.activeKey = "";
+    try { await AIS.logout(); } catch (error) { $("jobText").textContent = error.message; }
+  });
+  $("historyToggleBtn").addEventListener("click", () => {
+    const panel = $("datasetHistoryPanel"); panel.hidden = !panel.hidden;
+    $("historyToggleBtn").setAttribute("aria-expanded", String(!panel.hidden));
+  });
+  $("newDatasetBtn").addEventListener("click", () => {
+    $("newDatasetDetails").open = true;
+    $("datasetNameInput").focus();
+  });
+  $("datasetSearchInput").addEventListener("input", () => renderDatasets(state.historyDatasets, state.activeDatasetId));
+  $("clearDatasetBtn").addEventListener("click", async () => {
+    try { await postJson("/api/datasets/clear"); resetFilters(); await pollStatus(); }
+    catch (error) { $("jobText").textContent = error.message; }
+  });
   document.querySelectorAll("[data-collapse-card]").forEach((button) => {
     button.addEventListener("click", () => toggleSideCard(button));
   });
@@ -153,12 +180,19 @@ async function toggleMapFullscreen() {
 }
 
 async function api(path) {
-  const response = await fetch(path);
+  const datasetId = state.activeDatasetId;
+  const response = await authenticatedFetch(path);
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || response.statusText);
+    const error = await response.json().catch(() => ({}));
+    throw new Error(typeof error.detail === "string" ? error.detail : response.statusText);
   }
-  return response.json();
+  const data = await response.json();
+  if (datasetId !== state.activeDatasetId && !["/api/status", "/api/datasets"].includes(path)) throw new Error("数据已切换。");
+  return data;
+}
+
+function authenticatedFetch(path, options) {
+  return window.AIS ? window.AIS.request(path, options) : fetch(path, options);
 }
 
 async function postJson(path, payload = null) {
@@ -167,16 +201,16 @@ async function postJson(path, payload = null) {
     options.headers = { "Content-Type": "application/json" };
     options.body = JSON.stringify(payload);
   }
-  const response = await fetch(path, options);
+  const response = await authenticatedFetch(path, options);
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || response.statusText);
+    const error = await response.json().catch(() => ({}));
+    throw new Error(typeof error.detail === "string" ? error.detail : response.statusText);
   }
   return response.json();
 }
 
 async function deleteJson(path) {
-  const response = await fetch(path, { method: "DELETE" });
+  const response = await authenticatedFetch(path, { method: "DELETE" });
   if (!response.ok) throw new Error((await response.text()) || response.statusText);
   return response.json();
 }
@@ -191,13 +225,16 @@ async function selectDataset() {
   const datasetId = $("datasetSelect").value;
   if (!datasetId || datasetId === state.activeDatasetId) return;
   $("jobText").textContent = "正在切换数据";
-  await postJson(`/api/datasets/select/${encodeURIComponent(datasetId)}`);
-  state.activeKey = "";
-  state.mapFitted = false;
-  state.filters = {};
-  await pollStatus();
-  loadAll();
-  refreshTrackTiles();
+  try {
+    await postJson(`/api/datasets/select/${encodeURIComponent(datasetId)}`);
+    clearDatasetResults();
+    state.activeKey = "";
+    state.mapFitted = false;
+    resetFilters();
+    await pollStatus();
+    loadAll();
+    refreshTrackTiles();
+  } catch (error) { $("jobText").textContent = error.message; }
 }
 
 async function addDataset() {
@@ -268,7 +305,7 @@ async function uploadDataset() {
     form.append("file", file);
     form.append("name", $("datasetNameInput").value.trim());
     Object.entries(importOptions()).forEach(([key, value]) => form.append(key, value));
-    const response = await fetch("/api/datasets/upload", { method: "POST", body: form });
+    const response = await authenticatedFetch("/api/datasets/upload", { method: "POST", body: form });
     const data = await response.json();
     if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "上传失败");
     renderImportMapping(data.preview);
@@ -282,10 +319,20 @@ async function uploadDataset() {
 }
 
 async function pollStatus() {
+  const requestId = ++state.statusRequestId;
   try {
     const data = await api("/api/status");
+    if (requestId !== state.statusRequestId) return;
     if (state.activeDatasetId !== data.active_dataset_id) resetFilters();
     renderDatasets(data.datasets || [], data.active_dataset_id || "");
+    const selectedDataset = (data.datasets || []).find(item => item.id === data.active_dataset_id);
+    $("currentDatasetName").textContent = selectedDataset?.name || "尚未选择数据";
+    $("emptyDatasetHint").hidden = Boolean(selectedDataset);
+    $("clearDatasetBtn").hidden = !selectedDataset;
+    $("buildBtn").disabled = !selectedDataset || data.build_job?.status === "running" || data.clean_job?.status === "running";
+    ["runCleanBtn", "resetCleanBtn", "reportExcelBtn", "refreshBtn", "reportRefreshBtn", "applyBtn", "clearBtn",
+      "applyDirectionMmsiBtn", "fitMapBtn", "reloadTracksBtn", "grainSelect", "speedBinWidthSelect", "lengthBinWidthSelect",
+      "directionBinWidthSelect", "headingBinWidthSelect"].forEach(id => { $(id).disabled = !data.dataset_ready; });
     $("statusText").textContent = data.cleaned_dataset_ready
       ? "数据已清洗，可以查看"
       : data.dataset_ready
@@ -391,27 +438,36 @@ function updateCleanProgress(job, progress, manifest) {
 }
 
 async function startBuild() {
-  $("jobText").textContent = "正在开始加载";
-  await fetch("/api/build", { method: "POST" });
-  pollStatus();
+  try {
+    $("jobText").textContent = "正在开始加载";
+    await postJson("/api/build");
+    await pollStatus();
+  } catch (error) { $("jobText").textContent = error.message; }
 }
 
 async function runCleaning() {
-  $("cleanJobText").textContent = "提交清洗任务中";
-  updateCleanProgress({ status: "running" }, { stage: "queued", message: "提交清洗任务中", percent: 1 }, null);
-  await postJson("/api/cleaning/run", collectCleaningConfig());
-  pollStatus();
+  try {
+    $("cleanJobText").textContent = "提交清洗任务中";
+    updateCleanProgress({ status: "running" }, { stage: "queued", message: "提交清洗任务中", percent: 1 }, null);
+    await postJson("/api/cleaning/run", collectCleaningConfig());
+    await pollStatus();
+  } catch (error) {
+    $("cleanJobText").textContent = error.message;
+    updateCleanProgress({ status: "error", message: error.message }, { stage: "error", message: error.message }, null);
+  }
 }
 
 async function resetCleaning() {
-  $("cleanJobText").textContent = "切换回原始数据";
-  updateCleanProgress({ status: "idle" }, { stage: "idle", message: "等待清洗任务", percent: 0 }, null);
-  await postJson("/api/cleaning/reset");
-  state.activeKey = "";
-  state.mapFitted = false;
-  await pollStatus();
-  loadAll();
-  refreshTrackTiles();
+  try {
+    $("cleanJobText").textContent = "切换回原始数据";
+    updateCleanProgress({ status: "idle" }, { stage: "idle", message: "等待清洗任务", percent: 0 }, null);
+    await postJson("/api/cleaning/reset");
+    state.activeKey = "";
+    state.mapFitted = false;
+    await pollStatus();
+    loadAll();
+    refreshTrackTiles();
+  } catch (error) { $("cleanJobText").textContent = error.message; }
 }
 
 async function loadAll() {
@@ -469,10 +525,12 @@ function renderMetrics(items) {
 }
 
 function renderDatasets(datasets, activeDatasetId) {
+  state.historyDatasets = datasets;
+  $("historyCount").textContent = String(datasets.length);
   const select = $("datasetSelect");
   if (select) {
     const currentValue = select.value;
-    select.innerHTML = datasets
+    select.innerHTML = '<option value="">请选择历史数据</option>' + datasets
       .map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}${item.active ? "（当前）" : ""}</option>`)
       .join("");
     select.value = datasets.some((item) => item.id === activeDatasetId) ? activeDatasetId : currentValue;
@@ -484,7 +542,10 @@ function renderDatasets(datasets, activeDatasetId) {
     list.innerHTML = `<div class="muted">暂无数据文件</div>`;
     return;
   }
-  list.innerHTML = datasets
+  const search = $("datasetSearchInput").value.trim().toLowerCase();
+  const matching = datasets.filter(item => `${item.name} ${item.filename || ""}`.toLowerCase().includes(search));
+  if (!matching.length) { list.innerHTML = '<div class="muted">没有匹配的历史数据</div>'; return; }
+  list.innerHTML = matching
     .map((item) => {
       const role = item.cleaned_dataset_ready ? "已清洗" : item.source_dataset_ready ? "已加载" : "待加载";
       const rows = item.row_count ? `${numberFormat.format(item.row_count)} 条位置记录` : "尚未加载";
@@ -492,8 +553,11 @@ function renderDatasets(datasets, activeDatasetId) {
       return `
         <div class="dataset-item${item.active ? " active" : ""}">
           <strong>${escapeHtml(item.name)}</strong>
-          <span>${role} · ${rows} · ${source}</span>
-          ${!item.source_exists ? `<button class="dataset-remove" type="button" data-dataset-id="${escapeHtml(item.id)}" data-dataset-name="${escapeHtml(item.name)}"><svg class="ui-icon" aria-hidden="true"><use href="#i-trash" /></svg>移除</button>` : ""}
+          <span class="history-filename">${escapeHtml(item.filename || "")}</span>
+          <span>${role} · ${rows}${!item.source_exists ? ` · ${source}` : ""}</span>
+          <span>导入：${AIS.formatTime(item.created_at)}</span>
+          <span>最近使用：${AIS.formatTime(item.last_used_at)}</span>
+          <div class="history-actions"><button class="btn ghost history-use" type="button" data-dataset-id="${escapeHtml(item.id)}" ${!item.source_exists && !item.source_dataset_ready ? "disabled" : ""}>${item.active ? "正在使用" : item.source_dataset_ready ? "使用此数据" : "加载此数据"}</button><button class="dataset-remove" type="button" data-dataset-id="${escapeHtml(item.id)}" data-dataset-name="${escapeHtml(item.name)}">移除记录</button></div>
         </div>
       `;
     })
@@ -501,6 +565,12 @@ function renderDatasets(datasets, activeDatasetId) {
   list.querySelectorAll(".dataset-remove").forEach((button) => {
     button.addEventListener("click", () => removeDataset(button.dataset.datasetId, button.dataset.datasetName));
   });
+  list.querySelectorAll(".history-use").forEach(button => button.addEventListener("click", async () => {
+    const item = datasets.find(dataset => dataset.id === button.dataset.datasetId);
+    select.value = item.id;
+    await selectDataset();
+    if (state.activeDatasetId === item.id && !item.source_dataset_ready) await startBuild();
+  }));
 }
 
 async function removeDataset(datasetId, datasetName) {
@@ -1046,7 +1116,7 @@ function initMap() {
     initMarkerLayers();
     initDensityLayers();
     renderMarkers();
-    $("mapStatus").textContent = "正在加载船舶轨迹";
+    $("mapStatus").textContent = state.activeKey ? "正在加载船舶轨迹" : "等待加载数据";
     if (state.activeKey) refreshTrackTiles();
     fitMapToDataOnce();
   });
@@ -1624,7 +1694,7 @@ function renderMarkerList() {
 
 function loadMarkers() {
   try {
-    const saved = JSON.parse(localStorage.getItem("ais-platform-markers") || "[]");
+    const saved = JSON.parse(localStorage.getItem(`ais-platform-markers:user_${AIS.user.id}`) || "[]");
     state.markers = Array.isArray(saved) ? saved.filter(validStoredMarker) : [];
   } catch {
     state.markers = [];
@@ -1638,7 +1708,7 @@ function validStoredMarker(marker) {
 }
 
 function persistMarkers() {
-  localStorage.setItem("ais-platform-markers", JSON.stringify(state.markers));
+  localStorage.setItem(`ais-platform-markers:user_${AIS.user.id}`, JSON.stringify(state.markers));
 }
 
 function editMarker(id) {
@@ -1874,7 +1944,7 @@ function clearFilters() {
 
 function queryString(extra = {}) {
   const params = new URLSearchParams();
-  Object.entries({ ...state.filters, ...extra }).forEach(([key, value]) => {
+  Object.entries({ dataset_id: state.activeDatasetId, ...state.filters, ...extra }).forEach(([key, value]) => {
     if (value !== null && value !== undefined && value !== "") params.set(key, value);
   });
   const text = params.toString();

@@ -3,10 +3,63 @@
 This application imports Excel/CSV AIS tables and legacy PKL trajectories into
 an analysis-ready Parquet table, then serves a local dashboard.
 
+## Accounts, history and administration
+
+Open `http://127.0.0.1:8000` after starting the server. On first use, the
+local-only `/setup` page creates the initial super administrator with a password
+you choose (at least 10 characters). There is no built-in password. Existing
+registrations in `data/datasets/registry.json` are copied into this administrator's
+history without moving data files or rewriting the legacy registry.
+
+- `/login`: sign in to the analysis workbench.
+- `/admin/login` and `/admin`: super administrator user management.
+- `/account/password`: change your own password; this ends existing sessions.
+- Each new login opens with no selected dataset. Refreshing the same session
+  preserves its selection. Use **历史数据** to reuse a processed file or
+  **新增文件** to upload CSV/Excel. Imports and last-use timestamps persist per
+  account. History removal removes the registration, retaining disk files.
+- Ordinary users upload files. Importing a server-local path, including legacy
+  PKL, requires super administrator permission.
+- The administration page supports account creation, roles, enable/disable,
+  password resets, login/access records, session revocation and operation logs.
+  New accounts use temporary passwords and must change them before analysis.
+  Password resets default to the same requirement. Passwords are Argon2 hashes;
+  plaintext passwords and hashes are not returned by the administration API.
+- Login records start when this feature is enabled. Times display in
+  `Asia/Shanghai`. Effective sessions last 12 hours; activity timestamps update
+  at most once every 30 seconds and do not prove a user is currently online.
+
+Accounts, sessions, owned registrations, job status and audit records are stored
+in `data/private/platform.sqlite3` (override with `AIS_AUTH_DB`). This database,
+uploads, AIS data, generated outputs and previews are excluded from Git. Back
+up the private database together with the data files to preserve users/history;
+the legacy JSON registry is no longer the web application's source of truth.
+Dataset selection is scoped to a login session, and jobs/caches/exports to the
+account and dataset. Up to two data processing jobs run concurrently; each
+account runs one at a time. Interrupted jobs are marked after a server restart.
+
+All functional API endpoints require a session. Mutating authenticated requests
+also require the CSRF token returned by `/api/auth/me` in `X-CSRF-Token`; the web
+interface handles this automatically. Deployment uses the same origin for
+frontend and backend. HTTPS automatically enables Secure cookies.
+
+Install dependencies after updating the checkout:
+
+```powershell
+& '.\.venv\Scripts\python.exe' -m pip install -r requirements-lock.txt
+# HTTP integration tests additionally need:
+& '.\.venv\Scripts\python.exe' -m pip install -r requirements-dev.txt
+```
+
+Then start `start_dev.bat` in the server's own PowerShell window. Account HTTP
+tests use temporary databases and small synthetic datasets; they do not create
+production accounts or change the production registry.
+
 ## Excel and CSV import
 
-In **加载数据 → 添加新的数据文件**, enter a local file path and use **预览字段映射**,
-then **添加这个文件**. Alternatively use **选择 Excel / CSV 文件** to upload a file.
+In **加载数据 → 新增文件**, use **选择 Excel / CSV 文件** to upload a file.
+Super administrators may also enter a local file path and use **预览字段映射**,
+then **添加这个文件**.
 Click **加载数据** to build the normalized dataset; cleaning remains a separate action.
 
 - Supported tables: `.csv`, `.xlsx`, `.xls`. Empty Excel worksheets are ignored;
@@ -158,15 +211,16 @@ Then open:
 http://127.0.0.1:8000
 ```
 
-The active dataset and its paths are recorded in `data/datasets/registry.json`.
-The current dataset's imported points are stored at:
+Web dataset registrations and session selections are recorded in the private
+SQLite database. Legacy command-line tools still use `data/datasets/registry.json`.
+An existing dataset's imported points are stored at:
 
 ```text
 data/datasets/cleaned_trajs_2401/ais_points.parquet
 ```
 
 After that, API queries read Parquet through DuckDB instead of loading the whole
-pickle file. New registered datasets use `data/datasets/<dataset_id>/`. The
+pickle file. New web datasets use `data/datasets/user_<user_id>/<dataset_id>/`. The
 `data/processed/` directory contains results from the earlier single-dataset version.
 
 ## PNG raster track tiles

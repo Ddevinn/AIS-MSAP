@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
+import uuid
 
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from backend.app.config import EXPORT_DIR
+from backend.app.context import dataset_context
 from backend.app.services.analysis import (
     length_distribution,
     nav_state_distribution,
@@ -71,8 +73,10 @@ def _autofit(ws) -> None:
 
 
 def export_excel(filters: QueryFilters | None = None, direction_bin_width: int = 15) -> Path:
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    path = EXPORT_DIR / f"ais_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    context = dataset_context.get()
+    directory = EXPORT_DIR / f"user_{context.owner_id}" if context else EXPORT_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"ais_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.xlsx"
 
     wb = Workbook()
 

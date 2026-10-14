@@ -1,4 +1,9 @@
 # Verified Windows Python 3.12 environment
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.1.0
+cffi==2.1.1
+pycparser==3.11
+pwdlib==0.3.1
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.14.1

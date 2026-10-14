@@ -209,7 +209,7 @@ async function refreshDensityLayer(force = false) {
   $("densityPeakCount").textContent = $("densityActualSize").textContent = "—";
   renderDensityLegend();
   try {
-    const response = await fetch(url, { signal: controller.signal });
+    const response = await (window.AIS ? window.AIS.request(url, { signal: controller.signal }) : fetch(url, { signal: controller.signal }));
     if (!response.ok) throw new Error(`密度请求失败 (${response.status})`);
     const data = await response.json();
     if (requestId !== densityState.requestId || datasetKey !== state.activeKey || !densityState.enabled) return;

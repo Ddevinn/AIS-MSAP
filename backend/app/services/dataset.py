@@ -5,6 +5,8 @@ import math
 import re
 import threading
 import time
+import uuid
+from dataclasses import replace
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +16,9 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+
+from backend.app import storage
+from backend.app.context import dataset_context
 
 from backend.app.config import (
     AIS_COLUMNS,
@@ -47,15 +52,21 @@ class DatasetPaths:
 
 
 def dataset_ready(dataset_id: str | None = None) -> bool:
+    if dataset_id is None and dataset_context.get() and not active_dataset_id():
+        return False
     return active_parquet_path(dataset_id).exists()
 
 
 def source_dataset_ready(dataset_id: str | None = None) -> bool:
+    if dataset_id is None and dataset_context.get() and not active_dataset_id():
+        return False
     paths = dataset_paths(dataset_id)
     return paths.source_parquet.exists() and paths.source_manifest.exists()
 
 
 def cleaned_dataset_ready(dataset_id: str | None = None) -> bool:
+    if dataset_id is None and dataset_context.get() and not active_dataset_id():
+        return False
     paths = dataset_paths(dataset_id)
     return paths.cleaned_parquet.exists() and paths.cleaning_manifest.exists()
 
@@ -77,20 +88,22 @@ def cleaning_manifest_path(dataset_id: str | None = None) -> Path:
     return dataset_paths(dataset_id).cleaning_manifest
 
 
-def active_dataset_id() -> str:
-    return str(_registry()["active_dataset_id"])
+def active_dataset_id() -> str | None:
+    return _registry()["active_dataset_id"] or None
 
 
 def dataset_paths(dataset_id: str | None = None) -> DatasetPaths:
     registry = _registry()
-    resolved_id = dataset_id or str(registry["active_dataset_id"])
+    resolved_id = dataset_id or registry["active_dataset_id"]
+    if not resolved_id:
+        raise RuntimeError("尚未选择数据，请使用历史数据或新增文件。")
     dataset = _dataset_record(resolved_id, registry)
     return _paths_from_record(dataset)
 
 
 def list_datasets() -> list[dict[str, Any]]:
     registry = _registry()
-    active_id = str(registry["active_dataset_id"])
+    active_id = registry["active_dataset_id"]
     rows: list[dict[str, Any]] = []
     for dataset_id, dataset in registry["datasets"].items():
         paths = _paths_from_record(dataset)
@@ -110,11 +123,13 @@ def list_datasets() -> list[dict[str, Any]]:
                 "row_count": active_manifest.get("row_count") if active_manifest else None,
                 "trajectory_count": active_manifest.get("trajectory_count") if active_manifest else None,
                 "created_at": dataset.get("created_at"),
+                "last_used_at": dataset.get("last_used_at"),
+                "filename": paths.source_path.name,
                 "parquet": str(paths.source_parquet),
                 "cleaned_parquet": str(paths.cleaned_parquet),
             }
         )
-    return sorted(rows, key=lambda item: (not item["active"], str(item["name"])))
+    return sorted(rows, key=lambda item: str(item["last_used_at"] or item["created_at"] or ""), reverse=True)
 
 
 def register_dataset(
@@ -133,8 +148,9 @@ def register_dataset(
         inspect_tabular(source, source_timezone, csv_encoding, sheet_name)
 
     registry = _registry()
-    dataset_id = _unique_dataset_id(name or source.stem, registry["datasets"])
-    dataset_dir = DATASETS_DIR / dataset_id
+    context = dataset_context.get()
+    dataset_id = uuid.uuid4().hex if context else _unique_dataset_id(name or source.stem, registry["datasets"])
+    dataset_dir = DATASETS_DIR / f"user_{context.owner_id}" / dataset_id if context else DATASETS_DIR / dataset_id
     dataset = {
         "id": dataset_id,
         "name": name.strip() or source.stem,
@@ -167,16 +183,18 @@ def unregister_dataset(dataset_id: str) -> str:
     """Remove a dataset registration without deleting any source or generated files."""
     registry = _registry()
     _dataset_record(dataset_id, registry)
-    if len(registry["datasets"]) == 1:
+    if len(registry["datasets"]) == 1 and not dataset_context.get():
         raise ValueError("至少保留一个数据源。")
     del registry["datasets"][dataset_id]
     if registry["active_dataset_id"] == dataset_id:
-        registry["active_dataset_id"] = next(iter(registry["datasets"]))
+        registry["active_dataset_id"] = None if dataset_context.get() else next(iter(registry["datasets"]))
     _write_registry(registry)
-    return str(registry["active_dataset_id"])
+    return registry["active_dataset_id"]
 
 
 def read_manifest(dataset_id: str | None = None) -> dict[str, Any] | None:
+    if dataset_id is None and dataset_context.get() and not active_dataset_id():
+        return None
     paths = dataset_paths(dataset_id)
     path = paths.source_manifest
     if not path.exists():
@@ -185,6 +203,8 @@ def read_manifest(dataset_id: str | None = None) -> dict[str, Any] | None:
 
 
 def read_cleaning_manifest(dataset_id: str | None = None) -> dict[str, Any] | None:
+    if dataset_id is None and dataset_context.get() and not active_dataset_id():
+        return None
     paths = dataset_paths(dataset_id)
     path = paths.cleaning_manifest
     if not path.exists():
@@ -352,6 +372,9 @@ def build_parquet(
 
 
 def _registry() -> dict[str, Any]:
+    context = dataset_context.get()
+    if context:
+        return storage.owned_registry(context.owner_id, context.dataset_id)
     with _REGISTRY_LOCK:
         _ensure_registry_unlocked()
         return json.loads(DATASET_REGISTRY_PATH.read_text(encoding="utf-8"))
@@ -391,6 +414,11 @@ def _ensure_registry_unlocked() -> None:
 
 
 def _write_registry(registry: dict[str, Any]) -> None:
+    context = dataset_context.get()
+    if context:
+        storage.save_registry(context.owner_id, context.session_hash, registry)
+        dataset_context.set(replace(context, dataset_id=registry.get("active_dataset_id") or None))
+        return
     # 注意：调用方已持有 _REGISTRY_LOCK（RLock），此处不重复加锁
     DATASET_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
     # 用 parent / name+".tmp" 而非 with_suffix，避免多后缀在 Windows 的路径解析歧义

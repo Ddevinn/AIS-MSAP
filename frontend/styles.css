@@ -17,6 +17,26 @@
   --shadow-lg: 0 22px 56px rgba(21, 42, 68, 0.16);
 }
 
+[hidden] { display: none !important; }
+.account-identity { font-size: 12px; font-weight: 700; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-link { color: var(--muted); font: inherit; font-size: 11px; text-decoration: none; border: 0; background: none; padding: 0; cursor: pointer; }
+.account-link:hover { color: var(--blue); }
+.current-dataset { padding: 13px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-soft); margin-bottom: 12px; }
+.current-dataset > span { display: block; font-size: 10px; color: var(--muted); margin-bottom: 7px; }
+.current-dataset > strong { display: block; font-size: 13px; overflow-wrap: anywhere; }
+.current-dataset > p { font-size: 11px; color: var(--muted); line-height: 1.8; margin: 8px 0 0; }
+.current-dataset .account-link { margin-top: 9px; }
+.load-entry-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 13px; }
+.load-entry-row .btn { padding-inline: 9px; }
+#historyCount { border-radius: 4px; padding: 1px 5px; background: #e9eef6; font-size: 10px; }
+#datasetHistoryPanel { margin: 13px 0; }
+#datasetList { max-height: 410px; overflow-y: auto; }
+.history-filename { overflow-wrap: anywhere; }
+.history-actions { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-top: 8px; }
+.history-actions .btn { min-height: 30px; font-size: 10px; padding: 5px 8px; }
+.history-actions .dataset-remove { font-size: 10px; }
+.topbar-actions { flex-wrap: wrap; }
+
 * { box-sizing: border-box; }
 
 html { min-width: 320px; background: var(--bg); }
