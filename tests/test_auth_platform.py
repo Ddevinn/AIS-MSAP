@@ -87,6 +87,8 @@ class AccountPlatformTests(unittest.TestCase):
             response = anonymous.get(path, follow_redirects=False)
             self.assertEqual(response.status_code, 303, path)
         self.assertEqual(anonymous.get("/login").status_code, 200)
+        self.assertEqual(anonymous.get("/login").headers["Referrer-Policy"], "strict-origin-when-cross-origin")
+        self.assertEqual(self.admin.get("/").headers["Referrer-Policy"], "strict-origin-when-cross-origin")
 
     def test_empty_login_and_history_survive_relogin_without_auto_selection(self):
         alice, _ = self.user()

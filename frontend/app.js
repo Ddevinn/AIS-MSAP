@@ -1084,8 +1084,10 @@ function initMap() {
       sources: {
         osm: {
           type: "raster",
-          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tiles: [...window.AISBasemap.tiles],
           tileSize: 256,
+          minzoom: 0,
+          maxzoom: 19,
           attribution: "OpenStreetMap contributors",
         },
       },
@@ -1102,6 +1104,7 @@ function initMap() {
     minZoom: 7,
     maxZoom: 17,
   });
+  const basemap = window.AISBasemap.attach(state.map);
   state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left");
   state.map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
   // Fullscreen and wrapping controls can resize the container without a window resize.
@@ -1121,8 +1124,11 @@ function initMap() {
     fitMapToDataOnce();
   });
   state.map.on("error", (event) => {
+    if (basemap.handleError(event)) return;
     if (event && event.error) {
-      $("mapStatus").textContent = "轨迹加载失败，请缩小查看范围后重试。";
+      const tracks = event.sourceId === "ais-tracks" || event.error.url?.includes("/api/tiles/tracks/");
+      $("mapStatus").textContent = tracks ? "船舶轨迹加载失败，请刷新轨迹图层重试。" : "地图渲染异常，请刷新页面重试。";
+      console.warn("地图图层加载失败", event.error);
     }
   });
 }

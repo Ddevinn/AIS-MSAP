@@ -285,6 +285,10 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .map-card:fullscreen .map-pane { height: 100%; min-height: 0; }
 .map-card:fullscreen .map-stage { min-height: 0; }
 .map-status { padding: 7px 3px 0; color: var(--muted); font-size: 10px; }
+.basemap-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 3px 0; color: var(--muted); font-size: 10px; }
+.basemap-status.has-error { color: #a65125; }
+.basemap-status button { flex-shrink: 0; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #24598a; font: inherit; cursor: pointer; }
+.basemap-status button:hover { background: #eef5fb; }
 .map-layer-switches { position: absolute; z-index: 3; top: 14px; left: 56px; display: flex; gap: 4px; padding: 4px; border: 1px solid rgba(214,224,235,.95); border-radius: 11px; background: rgba(255,255,255,.95); box-shadow: var(--shadow-sm); backdrop-filter: blur(12px); }
 .map-layer-switches button { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 10px; border: 0; border-radius: 7px; color: #64748b; background: transparent; font-size: 11px; font-weight: 700; }
 .map-layer-switches button[aria-pressed="true"] { color: #174a79; background: #eaf4fb; }

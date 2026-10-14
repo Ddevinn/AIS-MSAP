@@ -6,7 +6,7 @@
     <title>AIS 船舶轨迹分析工作台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261014-accounts-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261014-basemap-1" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -210,6 +210,7 @@
                 </aside>
                 <button id="mapCoordinates" class="map-coordinates" type="button" title="点击切换为度分秒">经度 —　纬度 —</button>
                 <div id="mapStatus" class="map-status">地图初始化中</div>
+                <div id="basemapStatus" class="basemap-status" role="status"><span id="basemapStatusText">底图加载中…</span><button id="retryBasemapBtn" type="button">重新加载底图</button></div>
               </div>
 
               <aside class="map-workbench">
@@ -386,7 +387,8 @@
     <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261014-accounts-1"></script>
+    <script src="/static/basemap.js?v=20261014-1"></script>
+    <script src="/static/app.js?v=20261014-basemap-1"></script>
     <script src="/static/density.js?v=20261014-accounts-1"></script>
   </body>
 </html>

@@ -179,7 +179,9 @@ def install_security(app: FastAPI) -> None:
                     response.headers["X-AIS-User"] = str(user["user_id"])
             response.headers["X-Content-Type-Options"] = "nosniff"
             response.headers["X-Frame-Options"] = "DENY"
-            response.headers["Referrer-Policy"] = "same-origin"
+            # OSM requires Referer on browser tile requests. Send only our origin
+            # across origins, without disclosing account paths or query strings.
+            response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
             return response
         finally:
             if context_token is not None:

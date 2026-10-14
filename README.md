@@ -225,6 +225,13 @@ pickle file. New web datasets use `data/datasets/user_<user_id>/<dataset_id>/`. 
 
 ## PNG raster track tiles
 
+The OpenStreetMap basemap and AIS track tiles have independent loading states.
+The page sends an origin-only cross-origin Referer, as required for OSM browser
+tile requests. **重新加载底图** reloads visible basemap tiles without changing the
+dataset, filters or map markers. Transient basemap failures have at most two
+automatic retries; policy/rate-limit rejections retain a visible recovery hint.
+Tile URLs and normal browser caching are preserved during retries.
+
 The dashboard includes a MapLibre GL JS map. The base map is loaded from OpenStreetMap. The local backend reads every matching AIS point, keeps the original track order, renders fixed-style transparent PNG raster tiles, and caches them on disk. The map applies a 180-degree hue rotation and increased saturation and opacity to display the tracks in high-contrast orange against the blue sea; these display changes take effect on page refresh without restarting the backend or rebuilding cached tiles. Cache misses are distributed across up to four worker threads, so stopping the backend cannot leave orphan Python worker processes. Track data is not sampled or downsampled, and raw coordinates are not sent to the browser:
 
 ```text

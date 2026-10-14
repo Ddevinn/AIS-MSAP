@@ -164,6 +164,10 @@ def index() -> FileResponse:
 
 @app.get("/api/status")
 def status() -> dict[str, object]:
+    # Capture job completion before reading the files that the job publishes.
+    # Otherwise a response can report "done" with pre-completion file flags.
+    build_job = _build_job.snapshot()
+    clean_job = _clean_job.snapshot()
     paths = dataset_paths() if active_dataset_id() else None
     return {
         "active_dataset_id": active_dataset_id(),
@@ -177,8 +181,8 @@ def status() -> dict[str, object]:
         "active_manifest": read_active_manifest(),
         "active_parquet": str(active_parquet_path()) if paths else None,
         "cleaning_manifest": read_cleaning_manifest(),
-        "build_job": _build_job.snapshot(),
-        "clean_job": _clean_job.snapshot(),
+        "build_job": build_job,
+        "clean_job": clean_job,
     }
 
 
