@@ -86,9 +86,36 @@ The current project directory is `D:\AIS系统开发\AIS数据清洗及可视化
 The Python 3.12 environment has been rebuilt for this computer, and the saved
 dataset paths have been migrated to this directory.
 
-Double-click `start_website.bat`, or run the command below from the project
-directory. Open `http://127.0.0.1:8000` after the server starts. Keep the server
-window open while using the dashboard.
+Double-click `start_website.bat`, or run `start_dev.bat` in an independent
+PowerShell window. Open `http://127.0.0.1:8000` after the server starts. Keep
+this window open while using the dashboard; Ctrl+C stops the service.
+
+```powershell
+Set-Location -LiteralPath 'D:\AIS系统开发\AIS数据清洗及可视化'
+.\start_dev.bat
+```
+
+The launcher enables Uvicorn auto-reload and watches only `backend` Python
+files. Routine backend edits automatically restart the application process
+while the reload supervisor keeps the development port. Frontend changes
+need a browser refresh (Ctrl+F5 if old assets are cached). Data, exports and
+test files are outside the watched directory. New dependencies, environment
+variables and launch-option changes still require a manual restart.
+
+The batch entry point uses the project's Python environment directly; no
+PowerShell script-policy or system permission changes are needed.
+
+An already-running server started without `--reload` needs a one-time Ctrl+C
+in its owner terminal before using this launcher. The launcher reports an
+occupied port without stopping another process or changing its permissions.
+Codex updates code and runs checks; the independent terminal owns the service.
+
+Reload restarts in-process build/cleaning jobs and clears in-memory job state.
+Finish long jobs before editing backend files, or use a stable session:
+
+```powershell
+.\start_dev.bat --no-reload
+```
 
 To create an environment on another computer with Python 3.12 installed:
 
@@ -122,7 +149,7 @@ The converter adds `trajectory_id` during Parquet generation.
 Use the project Python environment:
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+.\start_dev.bat
 ```
 
 Then open:
@@ -189,6 +216,36 @@ Current cleaning rules include:
 - acceleration anomaly removal
 - time-gap based segment splitting
 - derived motion fields: distance, implied speed, acceleration, turn angle, and navigation state
+
+## Spatial density overlay
+
+The map now opens with an AIS activity-density overlay. Use **空间密度** and
+**船舶轨迹** on the map to toggle the layers independently. The **空间密度设置**
+tool selects smooth heatmap or count-grid rendering, approximate ground cell
+size (100 m–5 km), and opacity. Blue–teal–yellow encodes increasing activity;
+empty cells are transparent. The legend shows the current scope and counts.
+Click an occupied cell (or press Enter at the keyboard-navigated map center)
+to inspect its AIS-point and distinct-vessel counts.
+
+`GET /api/density-grid?cell_size_m=250` returns geographic cell polygons and
+metadata. All matching AIS observations are aggregated without point sampling.
+Grid origins and the dataset reference latitude stay fixed during filtering
+and zooming. Ground dimensions are approximate at that reference latitude.
+If more than 20,000 occupied cells would be returned, the grid is coarsened
+and its actual size is displayed; no cells or observations are silently dropped.
+Only finite coordinates within the Web Mercator basemap extent are counted.
+
+Time, vessel, ship-type, speed, region and behavior filters apply. A section
+uses the complete selected crossing tracks, matching the map, and is labeled
+accordingly. Behavior density counts recognized points, without adding the
+preceding segment endpoint. Grid color uses a logarithmic point-count scale;
+the heatmap smooths cell centers using logarithmically compressed count weights
+and labels the result as relative heat, not absolute counts. AIS point counts
+depend on reporting frequency and do not represent vessel abundance.
+
+```powershell
+& '.\.venv\Scripts\python.exe' -m unittest tests.test_density
+```
 
 ## Vessel behavior recognition
 

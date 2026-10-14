@@ -435,6 +435,7 @@ function clearDatasetResults() {
   speedChart = shipChart = timeChart = lengthChart = null;
   clearDirectionCharts();
   const map = state.map;
+  clearDensityData();
   if (map?.getLayer("ais-tracks-raster")) map.removeLayer("ais-tracks-raster");
   if (map?.getSource("ais-tracks")) map.removeSource("ais-tracks");
   $("mapStatus").textContent = "等待加载数据";
@@ -1043,6 +1044,7 @@ function initMap() {
   state.map.on("load", () => {
     state.mapLoaded = true;
     initMarkerLayers();
+    initDensityLayers();
     renderMarkers();
     $("mapStatus").textContent = "正在加载船舶轨迹";
     if (state.activeKey) refreshTrackTiles();
@@ -1156,7 +1158,7 @@ function toggleMapTool(tool) {
   state.openMapTool = state.openMapTool === tool ? null : tool;
   if (state.drawing) stopMarkerDrawing();
   if (state.measuring) stopMeasuring();
-  document.querySelectorAll(".marker-groups-section, .marker-create-section, .marker-library, .spatial-section, .measure-section, .behavior-section")
+  document.querySelectorAll(".marker-groups-section, .marker-create-section, .marker-library, .spatial-section, .measure-section, .behavior-section, .density-section")
     .forEach((element) => { element.hidden = true; });
   if (state.openMapTool === "marker") showMarkerOverview();
   if (state.openMapTool === "filter") document.querySelector(".spatial-section").hidden = false;
@@ -1167,6 +1169,7 @@ function toggleMapTool(tool) {
   if (state.openMapTool === "behavior") {
     document.querySelector(".behavior-section").hidden = false;
   }
+  if (state.openMapTool === "density") document.querySelector(".density-section").hidden = false;
   document.querySelector(".map-workbench").classList.toggle("expanded", Boolean(state.openMapTool));
   document.querySelectorAll("[data-map-tool]").forEach((button) => {
     button.classList.toggle("active", button.dataset.mapTool === state.openMapTool);
@@ -1748,6 +1751,7 @@ function refreshTrackTiles() {
   if (map.getLayer(layerId)) map.removeLayer(layerId);
   if (map.getSource(sourceId)) map.removeSource(sourceId);
   if (!state.manifest) {
+    clearDensityData();
     $("mapStatus").textContent = "等待加载数据";
     return;
   }
@@ -1778,6 +1782,8 @@ function refreshTrackTiles() {
   ["marker-region-fill", "marker-route-line", "marker-section-line", "marker-region-line", "marker-point", "draft-fill", "draft-line", "draft-points"].forEach((id) => {
     if (map.getLayer(id)) map.moveLayer(id);
   });
+  updateDensityStyle();
+  refreshDensityLayer();
   $("mapStatus").textContent = "正在加载轨迹地图";
   map.once("idle", () => {
     $("mapStatus").textContent = state.behaviorFilter

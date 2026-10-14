@@ -6,7 +6,7 @@
     <title>AIS 船舶轨迹分析工作台</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261013-directions-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261013-density-1" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -179,18 +179,33 @@
             <div class="map-card-head">
               <div class="map-title-group">
                 <span class="section-icon map"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg></span>
-                <div><span class="eyebrow">地图展示</span><h2>船舶轨迹与标记</h2><p>查看船舶轨迹，添加点、截面、航线和区域标记，并按标记统计交通流</p></div>
+                <div><span class="eyebrow">空间分析</span><h2>船舶轨迹与活动密度</h2><p>在地图上探索船舶活动热点、查看行为轨迹，并按区域或截面筛选</p></div>
               </div>
               <div class="button-row tight">
                 <button id="mapFullscreenBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-maximize" /></svg><span id="mapFullscreenText">全屏查看</span></button>
                 <button id="fitMapBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-locate" /></svg>回到数据范围</button>
-                <button id="reloadTracksBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>刷新轨迹</button>
+                <button id="reloadTracksBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>刷新图层</button>
               </div>
             </div>
 
             <div class="map-workspace">
               <div class="map-pane">
                 <div id="map" class="map-stage"></div>
+                <div class="map-layer-switches" role="group" aria-label="地图图层">
+                  <button id="densityToggleBtn" type="button" aria-pressed="true"><span class="density-layer-dot"></span>空间密度</button>
+                  <button id="tracksToggleBtn" type="button" aria-pressed="true"><span class="track-layer-dot"></span>船舶轨迹</button>
+                </div>
+                <aside id="densityLegend" class="density-legend" aria-label="空间密度图例" hidden>
+                  <div class="density-legend-head"><div><span class="eyebrow">AIS · 空间分布</span><h3>船舶活动密度</h3></div><span id="densityModeBadge" class="density-badge">热力</span></div>
+                  <p id="densityScope" class="density-scope">全部行为 · 当前筛选</p>
+                  <div id="densityLegendBody" hidden>
+                    <div class="density-colorbar" aria-hidden="true"></div>
+                    <div id="densityScaleLabels" class="density-scale-labels"></div>
+                    <div class="density-legend-stats"><span><b id="densityPointCount">—</b>AIS 点</span><span><b id="densityCellCount">—</b>有数据网格</span></div>
+                    <p id="densityLegendNote" class="density-legend-note"></p>
+                  </div>
+                  <p id="densityLegendStatus" class="density-legend-status" role="status">正在计算空间密度…</p>
+                </aside>
                 <button id="mapCoordinates" class="map-coordinates" type="button" title="点击切换为度分秒">经度 —　纬度 —</button>
                 <div id="mapStatus" class="map-status">地图初始化中</div>
               </div>
@@ -201,6 +216,7 @@
                   <button id="toggleFilterPanelBtn" data-map-tool="filter" title="按标记查看" aria-label="按标记查看"><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg></button>
                   <button id="toggleMeasurePanelBtn" data-map-tool="measure" title="测距" aria-label="测距"><svg class="ui-icon" aria-hidden="true"><use href="#i-ruler" /></svg></button>
                   <button id="toggleBehaviorPanelBtn" data-map-tool="behavior" title="行为识别" aria-label="行为识别"><svg class="ui-icon" aria-hidden="true"><use href="#i-route" /></svg></button>
+                  <button id="toggleDensityPanelBtn" data-map-tool="density" title="空间密度设置" aria-label="空间密度设置"><svg class="ui-icon" aria-hidden="true"><use href="#i-layers" /></svg></button>
                 </nav>
 
                 <section class="tool-section marker-groups-section" hidden>
@@ -292,6 +308,24 @@
                   </div>
                 </section>
 
+                <section class="tool-section density-section" hidden>
+                  <div class="tool-title"><span>空间密度</span><small>AIS 点聚集程度</small></div>
+                  <p class="density-intro">热点随当前筛选更新，空白区域保持透明。</p>
+                  <div class="density-mode-control" role="group" aria-label="密度显示方式">
+                    <button type="button" data-density-mode="heatmap" aria-pressed="true">平滑热力</button>
+                    <button type="button" data-density-mode="grid" aria-pressed="false">计数网格</button>
+                  </div>
+                  <label class="field">网格精度
+                    <select id="densityCellSizeSelect"><option value="100">约 100 m · 精细</option><option value="250" selected>约 250 m · 推荐</option><option value="500">约 500 m</option><option value="1000">约 1 km</option><option value="2000">约 2 km</option><option value="5000">约 5 km · 概览</option></select>
+                  </label>
+                  <label class="density-opacity-label" for="densityOpacityInput"><span>图层不透明度</span><output id="densityOpacityValue" for="densityOpacityInput">68%</output></label>
+                  <input id="densityOpacityInput" class="density-opacity" type="range" min="20" max="90" value="68" step="1" />
+                  <div class="density-summary"><span>每格最高点数<b id="densityPeakCount">—</b></span><span>实际网格精度<b id="densityActualSize">—</b></span></div>
+                  <p class="density-method">热力显示相对热点；网格按 AIS 点数着色，点击可查看点数与船舶数。点数受 AIS 发送频率影响，不等同于船舶数量。</p>
+                  <p id="densityPanelStatus" class="density-panel-status" role="status">等待加载数据</p>
+                  <button id="retryDensityBtn" class="btn ghost full" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>重新计算密度</button>
+                </section>
+
                 <section class="tool-section marker-library" hidden>
                   <div class="tool-title"><span>标记库</span><small>点击名称定位</small></div>
                   <div id="markerList" class="marker-list"><div class="empty-state">尚未保存标记</div></div>
@@ -349,6 +383,7 @@
 
     <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="/static/app.js?v=20261013-directions-1"></script>
+    <script src="/static/app.js?v=20261013-density-1"></script>
+    <script src="/static/density.js?v=20261013-density-1"></script>
   </body>
 </html>

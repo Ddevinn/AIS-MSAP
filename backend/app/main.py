@@ -50,6 +50,7 @@ from backend.app.services.dataset import (
 )
 from backend.app.services.exporter import export_excel
 from backend.app.services.directions import direction_histograms, direction_time_series, validate_direction_bin_width
+from backend.app.services.density import density_features
 from backend.app.services.plots import density_png
 from backend.app.services.query import QueryFilters, normalize_behavior, normalize_spatial_filter
 from backend.app.services.raster_tracks import (
@@ -445,6 +446,14 @@ def api_behaviors(filters: QueryFilters = Depends(parse_filters)) -> list[dict[s
 @app.get("/api/time-series")
 def api_time_series(grain: str = "day", filters: QueryFilters = Depends(parse_filters)) -> list[dict[str, object]]:
     return _call(time_series, grain=grain, filters=filters)
+
+
+@app.get("/api/density-grid")
+def api_density_grid(
+    cell_size_m: int = Query(default=250, ge=50, le=20000),
+    filters: QueryFilters = Depends(parse_filters),
+) -> dict[str, object]:
+    return _call(density_features, cell_size_m=cell_size_m, filters=filters)
 
 
 @app.get("/api/density.png")
