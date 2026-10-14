@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from math import ceil
+from math import ceil, isfinite
 from typing import Any
 
 from backend.app.config import MAX_BROWSER_TRACK_POINTS
@@ -65,6 +65,15 @@ def summary(filters: QueryFilters | None = None) -> dict[str, Any]:
     return result
 
 
+def _single_value_histogram(value: float, count: int, bin_width: float | None, default_width: float) -> dict[str, Any]:
+    """Keep constant observations in one positive-width, nonnegative bin."""
+    width = float(bin_width) if bin_width is not None else default_width
+    if not isfinite(width) or width <= 0:
+        width = default_width
+    lower = max(0.0, float(value) - width / 2)
+    return {"bins": [lower, lower + width], "counts": [int(count)]}
+
+
 def speed_histogram(bins: int = 40, bin_width: float | None = None, filters: QueryFilters | None = None) -> dict[str, Any]:
     require_dataset()
     source, params = analysis_source(filters)
@@ -80,7 +89,8 @@ def speed_histogram(bins: int = 40, bin_width: float | None = None, filters: Que
         if min_speed is None or max_speed is None:
             return {"bins": [], "counts": []}
         if min_speed == max_speed:
-            return {"bins": [float(min_speed), float(max_speed)], "counts": [0, 0]}
+            count = con.execute(f"SELECT count(speed)::UBIGINT FROM {source}", params).fetchone()[0]
+            return _single_value_histogram(min_speed, count, bin_width, default_width=1.0)
         if bin_width is not None and float(bin_width) > 0:
             computed_bins = max(5, min(int(ceil((max_speed - min_speed) / float(bin_width))), 200))
         else:
@@ -287,7 +297,11 @@ def length_distribution(bins: int = 30, bin_width: float | None = None, filters:
         if min_len is None or max_len is None:
             return {"bins": [], "counts": []}
         if min_len == max_len:
-            return {"bins": [float(min_len), float(max_len)], "counts": [0, 0]}
+            count = con.execute(
+                f"SELECT count(*)::UBIGINT FROM (SELECT DISTINCT mmsi FROM {source} {full_where}) AS vessels",
+                params,
+            ).fetchone()[0]
+            return _single_value_histogram(min_len, count, bin_width, default_width=10.0)
         if bin_width is not None and float(bin_width) > 0:
             computed_bins = max(5, min(int(ceil((max_len - min_len) / float(bin_width))), 200))
         else:
