@@ -16,10 +16,11 @@ history without moving data files or rewriting the legacy registry.
 - `/account/password`: change your own password; this ends existing sessions.
 - Each new login opens with no selected dataset. Refreshing the same session
   preserves its selection. Use **历史数据** to reuse a processed file or
-  **新增文件** to upload CSV/Excel. Imports and last-use timestamps persist per
+  **新增文件** to upload CSV/Excel/PKL. Imports and last-use timestamps persist per
   account. History removal removes the registration, retaining disk files.
-- Ordinary users upload files. Importing a server-local path, including legacy
-  PKL, requires super administrator permission.
+- All signed-in users can upload CSV, Excel and PKL files through the same file
+  picker. Importing a server-local path through the API remains restricted to
+  super administrators.
 - The administration page supports account creation, roles, enable/disable,
   password resets, login/access records, session revocation and operation logs.
   New accounts use temporary passwords and must change them before analysis.
@@ -55,15 +56,18 @@ Then start `start_dev.bat` in the server's own PowerShell window. Account HTTP
 tests use temporary databases and small synthetic datasets; they do not create
 production accounts or change the production registry.
 
-## Excel and CSV import
+## File import
 
-In **加载数据 → 新增文件**, use **选择 Excel / CSV 文件** to upload a file.
-Super administrators may also enter a local file path and use **预览字段映射**,
-then **添加这个文件**.
+In **加载数据 → 新增文件**, use **选择 Excel / CSV / PKL 文件** to upload a file.
+The optional data name defaults to the filename. There is no manual path input.
 Click **加载数据** to build the normalized dataset; cleaning remains a separate action.
 
 - Supported tables: `.csv`, `.xlsx`, `.xls`. Empty Excel worksheets are ignored;
   nonempty worksheets must have a header row and compatible AIS fields.
+- Supported trajectories: `.pkl`, `.pickle`, containing a nonempty list of numeric
+  N×9 arrays in the legacy column order documented below. Uploads show trajectory
+  and point counts. PKL reads allow only the NumPy constructors needed for this
+  format; arbitrary Python globals and nonnumeric arrays are rejected.
 - Required fields: MMSI, time, longitude, latitude, speed, and course over ground.
 - Optional fields: ship type, length, width, draught, and true heading.
 - Matching uses header names and aliases, ignoring case, whitespace, underscores,

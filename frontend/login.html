@@ -2,20 +2,21 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>登录 · AIS数据分析与态势评估平台</title><link rel="icon" href="data:,">
+  <title>登录 · AIS数据分析与态势评估平台</title><link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3">
   <link rel="stylesheet" href="/static/account.css?v=20261014-ui-1">
+  <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3">
+  <link rel="stylesheet" href="/static/login.css?v=20261014-logo-3">
   <script defer src="/static/session.js?v=20261014-1"></script>
-  <script defer src="/static/login.js?v=20261014-ui-1"></script>
+  <script defer src="/static/login.js?v=20261015-login-1"></script>
 </head>
 <body class="auth-page">
   <main class="auth-shell">
     <section class="auth-story" aria-label="平台介绍">
-      <div class="account-brand"><span class="brand-symbol">A</span><span>AIS数据分析与态势评估平台</span></div>
-      <div class="auth-story-copy"><span class="overline">MARITIME ANALYSIS WORKSPACE</span><h1>从每一个位置，<br>看见航行的全貌。</h1><p>导入船舶数据，整理轨迹，探索水域中的航行规律。<br>每个账号拥有自己的数据空间。</p></div>
-      <p class="auth-story-foot">数据导入 · 轨迹清洗 · 空间统计 · 行为分析</p>
+      <div class="account-brand"><span class="brand-symbol" aria-hidden="true"><img class="platform-logo" src="/static/assets/ais-logo.png?v=20261014-logo-3" alt="" width="64" height="64"></span><span>AIS数据分析与态势评估平台</span></div>
+      <div class="auth-story-copy"><span class="overline">MARITIME ANALYSIS WORKSPACE</span><h1>从每一个位置，<br>看见航行的全貌。</h1></div>
     </section>
     <section class="auth-form-panel">
-      <span id="authEyebrow" class="overline dark">欢迎回来</span><h2 id="authTitle">登录平台</h2><p id="authDescription" class="secondary">登录后，选择历史数据或新增一个数据文件。</p>
+      <span id="authEyebrow" class="overline dark">欢迎回来</span><h2 id="authTitle">登录平台</h2><p id="authDescription" class="secondary" hidden></p>
       <form id="authForm">
         <label id="usernameField">账号<input id="username" name="username" autocomplete="username" minlength="3" maxlength="40" pattern="[A-Za-z0-9_.-]+" required placeholder="请输入账号"></label>
         <label id="displayNameField" hidden>显示名称<input id="displayName" name="displayName" maxlength="80" placeholder="例如：平台管理员"></label>

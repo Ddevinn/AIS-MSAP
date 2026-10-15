@@ -146,7 +146,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("accountRole").textContent = AIS.user.role === "superadmin" ? "超级管理员" : "普通用户";
   $("adminEntry").hidden = AIS.user.role !== "superadmin";
   setupAccountMenu();
-  document.querySelectorAll("[data-local-import]").forEach(element => { element.hidden = AIS.user.role !== "superadmin"; });
   $("logoutBtn").addEventListener("click", async () => {
     clearInterval(state.statusTimer);
     clearDatasetResults();
@@ -174,8 +173,6 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("buildBtn").addEventListener("click", startBuild);
   $("selectDatasetBtn").addEventListener("click", selectDataset);
   $("reloadDatasetsBtn").addEventListener("click", loadDatasets);
-  $("addDatasetBtn").addEventListener("click", addDataset);
-  $("previewDatasetBtn").addEventListener("click", previewDataset);
   $("uploadDatasetBtn").addEventListener("click", () => $("datasetFileInput").click());
   $("datasetFileInput").addEventListener("change", uploadDataset);
   $("refreshBtn").addEventListener("click", loadAll);
@@ -314,33 +311,6 @@ async function selectDataset() {
   } catch (error) { $("jobText").textContent = error.message; }
 }
 
-async function addDataset() {
-  const sourcePath = $("datasetPathInput").value.trim();
-  const name = $("datasetNameInput").value.trim();
-  if (!sourcePath) {
-    $("jobText").textContent = "请输入数据文件位置";
-    return;
-  }
-  $("jobText").textContent = "正在添加数据文件";
-  try {
-    await postJson("/api/datasets/register", {
-      name,
-      source_path: sourcePath,
-      make_active: true,
-      ...importOptions(),
-    });
-    $("datasetNameInput").value = "";
-    $("datasetPathInput").value = "";
-    state.activeKey = "";
-    state.mapFitted = false;
-    state.filters = {};
-    await pollStatus();
-    $("jobText").textContent = "文件已添加，点击“加载数据”转换为可分析格式";
-  } catch (error) {
-    $("jobText").textContent = error.message;
-  }
-}
-
 function importOptions() {
   return {
     source_timezone: $("importTimezoneSelect").value,
@@ -348,23 +318,13 @@ function importOptions() {
   };
 }
 
-async function previewDataset() {
-  const path = $("datasetPathInput").value.trim();
-  if (!path) { $("jobText").textContent = "请输入 Excel 或 CSV 文件位置"; return; }
-  try {
-    $("jobText").textContent = "正在识别表头和时间字段";
-    const data = await postJson("/api/datasets/preview", { source_path: path, ...importOptions() });
-    renderImportMapping(data);
-    $("jobText").textContent = "字段识别完成，可以添加并加载数据";
-  } catch (error) {
-    $("importMappingPanel").hidden = true;
-    $("jobText").textContent = error.message;
-  }
-}
-
 function renderImportMapping(data) {
   const panel = $("importMappingPanel");
   panel.hidden = false;
+  if (data.format === "pkl") {
+    panel.innerHTML = `<b>PKL 轨迹数据</b><small>${numberFormat.format(data.trajectory_count)} 条轨迹 · ${numberFormat.format(data.row_count)} 个轨迹点</small>`;
+    return;
+  }
   const entries = Object.entries(data.mapping || {});
   panel.innerHTML = `<b>识别结果</b><small>${escapeHtml(data.sheet || "")} · ${escapeHtml(data.source_timezone || "")}</small>`
     + entries.map(([field, column]) => `<div><span>${escapeHtml(column)}</span><span>→ ${escapeHtml(data.field_labels?.[field] || field)} (${escapeHtml(field)})</span></div>`).join("")
@@ -377,6 +337,7 @@ async function uploadDataset() {
   const button = $("uploadDatasetBtn");
   button.disabled = true;
   try {
+    $("importMappingPanel").hidden = true;
     $("jobText").textContent = "正在上传并识别文件";
     const form = new FormData();
     form.append("file", file);
@@ -386,6 +347,7 @@ async function uploadDataset() {
     const data = await response.json();
     if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "上传失败");
     renderImportMapping(data.preview);
+    $("datasetNameInput").value = "";
     state.activeKey = "";
     state.mapFitted = false;
     state.filters = {};

@@ -8,6 +8,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("authEyebrow").textContent = "首次使用";
     byId("authTitle").textContent = "创建超级管理员";
     byId("authDescription").textContent = "设置平台管理账号。现有数据将归入该账号的历史数据。";
+    byId("authDescription").hidden = false;
     byId("displayNameField").hidden = byId("confirmField").hidden = false;
     byId("confirmPassword").required = true;
     byId("password").minLength = 10;
@@ -21,6 +22,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     byId("authEyebrow").textContent = "账号设置";
     byId("authTitle").textContent = "修改登录密码";
     byId("authDescription").textContent = "修改后需要重新登录，已有登录会话将结束。";
+    byId("authDescription").hidden = false;
     byId("usernameField").hidden = true;
     byId("username").required = false;
     byId("passwordLabel").textContent = "当前密码";
@@ -36,7 +38,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   } else if (admin) {
     byId("authEyebrow").textContent = "平台管理";
     byId("authTitle").textContent = "登录用户管理后台";
-    byId("authDescription").textContent = "超级管理员可以管理账号、登录记录和访问会话。";
     byId("authSubmit").textContent = "登录管理后台";
     byId("alternateLogin").href = "/login";
     byId("alternateLogin").textContent = "进入分析平台";

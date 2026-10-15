@@ -245,8 +245,8 @@ async def api_upload_dataset(
     from backend.app.services.ingestion import TABULAR_SUFFIXES, inspect_tabular, validate_options
     filename = Path(file.filename or "").name
     suffix = Path(filename).suffix.lower()
-    if suffix not in TABULAR_SUFFIXES:
-        raise HTTPException(status_code=400, detail="选择 CSV、XLSX 或 XLS 文件；原有 PKL 使用文件位置导入。")
+    if suffix not in TABULAR_SUFFIXES | {".pkl", ".pickle"}:
+        raise HTTPException(status_code=400, detail="请选择 CSV、Excel（.xlsx/.xls）或 PKL（.pkl/.pickle）文件。")
     try:
         validate_options(source_timezone, csv_encoding)
     except ValueError as exc:
@@ -259,7 +259,10 @@ async def api_upload_dataset(
         with source.open("wb") as handle:
             while chunk := await file.read(1024 * 1024):
                 handle.write(chunk)
-        preview = inspect_tabular(source, source_timezone, csv_encoding)
+        if suffix in TABULAR_SUFFIXES:
+            preview = inspect_tabular(source, source_timezone, csv_encoding)
+        else:
+            preview = await asyncio.to_thread(inspect_pickle, source_path=source)
         with _build_lock, _clean_lock:
             if _build_job["status"] == "running" or _clean_job["status"] == "running":
                 raise HTTPException(status_code=409, detail="任务运行中，完成后再上传数据源。")

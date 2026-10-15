@@ -4,9 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AIS数据分析与态势评估平台</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
     <link rel="stylesheet" href="/static/styles.css?v=20261014-ui-2" />
+    <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
     <svg class="svg-sprite" aria-hidden="true">
@@ -48,7 +49,7 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
-          <span class="brand-mark"><svg class="ui-icon brand-icon" aria-hidden="true"><use href="#i-ship" /></svg></span>
+          <span class="brand-mark" aria-hidden="true"><img class="platform-logo" src="/static/assets/ais-logo.png?v=20261014-logo-3" alt="" width="64" height="64" /></span>
           <h1>AIS数据分析与态势评估平台</h1>
         </div>
         <div class="topbar-actions">
@@ -84,13 +85,11 @@
             <details id="newDatasetDetails" class="compact-details">
               <summary>新增数据文件</summary>
               <div class="details-body">
-                <label class="field">数据名称<input id="datasetNameInput" type="text" placeholder="例如：2024 年 1 月船舶数据" /></label>
-                <div data-local-import hidden><label class="field">本机文件位置（管理员）<input id="datasetPathInput" type="text" placeholder="D:\data\船舶数据.xlsx / .csv / .pkl" /></label></div>
+                <label class="field">数据名称（可选）<input id="datasetNameInput" type="text" placeholder="留空时使用文件名" /></label>
                 <label class="field">无时区日期的时区<select id="importTimezoneSelect"><option value="Asia/Shanghai">北京时间（Asia/Shanghai）</option><option value="UTC">UTC</option></select></label>
                 <label class="field">CSV 编码<select id="importEncodingSelect"><option value="auto">自动识别 UTF-8 / GB18030</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select></label>
-                <div data-local-import hidden><div class="button-row"><button id="previewDatasetBtn" class="btn ghost">预览字段映射</button><button id="addDatasetBtn" class="btn dark">添加这个文件</button></div></div>
-                <input id="datasetFileInput" type="file" accept=".csv,.xlsx,.xls" hidden />
-                <button id="uploadDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>选择 Excel / CSV 文件</button>
+                <input id="datasetFileInput" type="file" accept=".csv,.xlsx,.xls,.pkl,.pickle" hidden />
+                <button id="uploadDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>选择 Excel / CSV / PKL 文件</button>
                 <div id="importMappingPanel" class="import-mapping" hidden></div>
               </div>
             </details>
@@ -398,7 +397,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261014-ui-2"></script>
+    <script src="/static/app.js?v=20261015-import-1"></script>
     <script src="/static/density.js?v=20261014-accounts-1"></script>
   </body>
 </html>

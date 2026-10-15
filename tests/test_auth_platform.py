@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import pickle
 import tempfile
 import time
 import unittest
@@ -10,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+import numpy as np
 
 from backend.app import main, storage
 from backend.app.services import dataset, exporter, raster_tracks
@@ -134,6 +136,48 @@ class AccountPlatformTests(unittest.TestCase):
             self.assertEqual(alice.get(path).status_code, 403, path)
         self.assertEqual(alice.post("/api/datasets/register", json={"source_path": str(self.root)}).status_code, 403)
         self.assertEqual(alice.post("/api/datasets/preview", json={"source_path": str(self.root)}).status_code, 403)
+
+    def test_pkl_upload_and_build_work_for_ordinary_users_and_admins(self):
+        alice, _ = self.user()
+        trajectory = np.asarray([
+            [413523230, 1643715164, 110.12933, 20.21789, 196.8, 9.7, 70, 123, 20],
+            [413523230, 1643715224, 110.13033, 20.21889, 196.8, 9.7, 70, 123, 20],
+        ])
+        for client, filename, other in ((alice, "船舶轨迹.PKL", self.admin),
+                                        (self.admin, "legacy.pickle", alice)):
+            with self.subTest(filename=filename):
+                response = client.post("/api/datasets/upload", files={
+                    "file": (filename, pickle.dumps([trajectory]), "application/octet-stream"),
+                })
+                self.assertEqual(response.status_code, 200, response.text)
+                result = response.json()
+                dataset_id = result["dataset"]["id"]
+                self.assertEqual(result["dataset"]["name"], Path(filename).stem)
+                self.assertEqual(result["active_dataset_id"], dataset_id)
+                self.assertEqual(result["preview"]["format"], "pkl")
+                self.assertEqual(result["preview"]["trajectory_count"], 1)
+                self.assertEqual(result["preview"]["row_count"], 2)
+                self.assertEqual(other.post(f"/api/datasets/select/{dataset_id}").status_code, 404)
+                state = self.build(client)
+                self.assertEqual(state["manifest"]["row_count"], 2)
+                self.assertEqual(client.get("/api/summary").json()["point_count"], 2)
+
+    def test_invalid_pkl_upload_keeps_selection_and_removes_failed_upload(self):
+        alice, _ = self.user()
+        previous = self.upload(alice)
+        payloads = (b"not a pickle", pickle.dumps({}), pickle.dumps([]),
+                    pickle.dumps([np.ones((1, 8))]), pickle.dumps([np.empty((0, 9))]),
+                    pickle.dumps([np.full((1, 9), "text")]))
+        for payload in payloads:
+            response = alice.post("/api/datasets/upload", files={
+                "file": ("invalid.pkl", payload, "application/octet-stream"),
+            })
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertIn("导入失败", response.json()["detail"])
+            state = alice.get("/api/status").json()
+            self.assertEqual(state["active_dataset_id"], previous)
+            self.assertEqual(len(state["datasets"]), 1)
+        self.assertEqual(list((self.root / "uploads").rglob("*.pkl")), [])
 
     def test_parallel_queries_rendering_jobs_and_export_stay_isolated(self):
         alice, _ = self.user("alice")

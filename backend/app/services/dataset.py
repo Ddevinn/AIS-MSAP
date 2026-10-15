@@ -13,12 +13,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 import numpy as np
-import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from backend.app import storage
 from backend.app.context import dataset_context
+from backend.app.services.pickle_ingestion import load_pickle_trajectories
 
 from backend.app.config import (
     AIS_COLUMNS,
@@ -226,9 +226,7 @@ def inspect_pickle(source_path: Path | None = None, dataset_id: str | None = Non
         from backend.app.services.ingestion import inspect_tabular
         paths = dataset_paths(dataset_id)
         return inspect_tabular(source_path, paths.source_timezone, paths.csv_encoding, paths.sheet_name)
-    obj = pd.read_pickle(source_path)
-    if not isinstance(obj, list):
-        raise TypeError(f"Expected pickle list, got {type(obj)!r}")
+    obj = load_pickle_trajectories(source_path)
 
     shapes = [getattr(item, "shape", None) for item in obj]
     valid_shapes = [shape for shape in shapes if shape and len(shape) == 2]
@@ -236,6 +234,7 @@ def inspect_pickle(source_path: Path | None = None, dataset_id: str | None = Non
     cols = sorted({int(shape[1]) for shape in valid_shapes})
     lengths = [int(shape[0]) for shape in valid_shapes]
     return {
+        "format": "pkl",
         "source": str(source_path),
         "trajectory_count": len(obj),
         "row_count": rows,
@@ -278,9 +277,7 @@ def build_parquet(
         output_path.unlink()
 
     started = time.perf_counter()
-    obj = pd.read_pickle(source_path)
-    if not isinstance(obj, list):
-        raise TypeError(f"Expected pickle list, got {type(obj)!r}")
+    obj = load_pickle_trajectories(source_path)
 
     total_trajectories = len(obj)
     total_rows = 0
