@@ -1536,6 +1536,7 @@ function savePointMarkers(points) {
     name: points.length === 1 && baseName ? baseName : `${baseName || "点标记"} ${start + index}`,
     category,
     color,
+    visible: true,
     points: [[Number(point[0].toFixed(8)), Number(point[1].toFixed(8))]],
   }));
   }
@@ -1594,6 +1595,7 @@ function finishMarkerDrawing() {
     name: $("markerNameInput").value.trim() || `${rule.label}标记 ${state.markers.filter((item) => item.type === state.markerType).length + 1}`,
     category: $("markerCategoryInput").value.trim() || "未分类",
     color: $("markerColorInput").value,
+    visible: state.markers.find((item) => item.id === state.editingMarkerId)?.visible !== false,
     points: geometryPoints.map((point) => [Number(point[0].toFixed(8)), Number(point[1].toFixed(8))]),
   };
   const index = state.markers.findIndex((item) => item.id === marker.id);
@@ -1705,7 +1707,10 @@ function markerFeature(marker) {
 
 function renderMarkers() {
   const source = state.map?.getSource("saved-markers");
-  if (source) source.setData({ type: "FeatureCollection", features: state.markers.map(markerFeature) });
+  if (source) source.setData({
+    type: "FeatureCollection",
+    features: state.markers.filter((marker) => marker.visible !== false).map(markerFeature),
+  });
   renderMarkerList();
 }
 
@@ -1717,12 +1722,13 @@ function renderMarkerList() {
     return;
   }
   container.innerHTML = state.markers.map((marker) => `
-    <article class="marker-item ${state.spatialFilter?.markerId === marker.id ? "active" : ""}">
+    <article class="marker-item ${state.spatialFilter?.markerId === marker.id ? "active" : ""} ${marker.visible === false ? "hidden-marker" : ""}">
       <button class="marker-main" onclick="zoomToMarker(${marker.id})">
         <i style="--marker-color:${escapeHtml(marker.color)}"></i>
         <span><b>${escapeHtml(marker.name)}</b><small>${markerTypeLabel(marker)} · ${escapeHtml(marker.category)} · ${marker.type === "region" && (marker.areaShape || "polygon") !== "polygon" ? "自动生成边界" : `${marker.points.length} 节点`}</small></span>
       </button>
       <div class="marker-actions">
+        ${["section", "region"].includes(marker.type) ? `<button class="visibility" onclick="toggleMarkerVisibility(${marker.id})" title="${marker.visible === false ? "显示标记" : "隐藏标记"}" aria-label="${marker.visible === false ? "显示标记" : "隐藏标记"}" aria-pressed="${marker.visible === false}"><svg class="ui-icon" aria-hidden="true"><use href="#${marker.visible === false ? "i-eye-off" : "i-eye"}" /></svg></button>` : ""}
         <button class="edit" onclick="editMarker(${marker.id})" title="重新绘制" aria-label="重新绘制"><svg class="ui-icon" aria-hidden="true"><use href="#i-edit" /></svg></button>
         <button class="delete" onclick="deleteMarker(${marker.id})" title="删除" aria-label="删除"><svg class="ui-icon" aria-hidden="true"><use href="#i-trash" /></svg></button>
       </div>
@@ -1733,7 +1739,9 @@ function renderMarkerList() {
 function loadMarkers() {
   try {
     const saved = JSON.parse(localStorage.getItem(`ais-platform-markers:user_${AIS.user.id}`) || "[]");
-    state.markers = Array.isArray(saved) ? saved.filter(validStoredMarker) : [];
+    state.markers = Array.isArray(saved)
+      ? saved.filter(validStoredMarker).map((marker) => ({ ...marker, visible: marker.visible !== false }))
+      : [];
   } catch {
     state.markers = [];
   }
@@ -1747,6 +1755,14 @@ function validStoredMarker(marker) {
 
 function persistMarkers() {
   localStorage.setItem(`ais-platform-markers:user_${AIS.user.id}`, JSON.stringify(state.markers));
+}
+
+function toggleMarkerVisibility(id) {
+  const marker = state.markers.find((item) => item.id === id);
+  if (!marker || !["section", "region"].includes(marker.type)) return;
+  marker.visible = marker.visible === false;
+  persistMarkers();
+  renderMarkers();
 }
 
 function editMarker(id) {
