@@ -1,5 +1,5 @@
 const densityState = {
-  enabled: true, showTracks: true, mode: "heatmap", opacity: 0.68, cellSize: 250,
+  enabled: false, showTracks: false, mode: "heatmap", opacity: 0.68, cellSize: 250,
   data: null, dataKey: "", requestKey: "", requestId: 0, controller: null, popup: null,
 };
 const DENSITY_COLORS = ["#2552a5", "#1f80bf", "#24b6bc", "#a3d67c", "#f5cd4c"];
@@ -16,6 +16,7 @@ window.addEventListener("DOMContentLoaded", () => {
   $("tracksToggleBtn").addEventListener("click", () => {
     densityState.showTracks = !densityState.showTracks;
     updateDensityStyle();
+    refreshTrackTiles();
   });
   document.querySelectorAll("[data-density-mode]").forEach((button) => {
     button.addEventListener("click", () => {

@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
     <link rel="stylesheet" href="/static/styles.css?v=20261015-marker-1" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
@@ -145,6 +145,7 @@
               <button id="applyBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-filter" /></svg>应用筛选</button>
               <button id="clearBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-close" /></svg>清空</button>
             </div>
+            <button id="exportFilteredBtn" type="button" class="btn ghost full" title="导出已应用筛选的明细" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg>导出数据</button>
           </section>
 
           <section class="side-card cleaning-card">
@@ -169,6 +170,7 @@
               <button id="runCleanBtn" class="btn primary"><svg class="ui-icon" aria-hidden="true"><use href="#i-play" /></svg>开始清洗</button>
               <button id="resetCleanBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>恢复清洗前数据</button>
             </div>
+            <button id="exportCleanedBtn" type="button" class="btn ghost full" title="导出当前数据集的全部清洗结果" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg>导出数据</button>
             <div id="cleanJobText" class="job-line">待命</div>
             <div class="progress-box">
               <div><span id="cleanProgressStage">等待任务</span><b id="cleanProgressValue">0%</b></div>
@@ -205,8 +207,8 @@
               <div class="map-pane">
                 <div id="map" class="map-stage"></div>
                 <div class="map-layer-switches" role="group" aria-label="地图图层">
-                  <button id="densityToggleBtn" type="button" aria-pressed="true"><span class="density-layer-dot"></span>空间密度</button>
-                  <button id="tracksToggleBtn" type="button" aria-pressed="true"><span class="track-layer-dot"></span>船舶轨迹</button>
+                  <button id="densityToggleBtn" type="button" aria-pressed="false"><span class="density-layer-dot"></span>空间密度</button>
+                  <button id="tracksToggleBtn" type="button" aria-pressed="false"><span class="track-layer-dot"></span>船舶轨迹</button>
                 </div>
                 <aside id="densityLegend" class="density-legend" aria-label="空间密度图例" hidden>
                   <div class="density-legend-head"><div><span class="eyebrow">AIS · 空间分布</span><h3>船舶活动密度</h3></div><span id="densityModeBadge" class="density-badge">热力</span></div>
@@ -292,6 +294,7 @@
                     <button id="clearSpatialBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg>查看全部</button>
                   </div>
                   <div id="spatialTrafficStats" class="spatial-stats">选择截面或区域标记后显示交通流统计</div>
+                  <button id="exportSpatialBtn" type="button" class="btn ghost full" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg><span id="exportSpatialText">导出穿越轨迹</span></button>
                 </section>
 
                 <section class="tool-section measure-section" hidden>
@@ -395,11 +398,11 @@
       </main>
     </div>
 
-    <script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="/static/vendor/maplibre-gl.js"></script>
+    <script src="/static/vendor/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261015-marker-1"></script>
-    <script src="/static/density.js?v=20261014-accounts-1"></script>
+    <script src="/static/app.js?v=20261109-marker-visibility-1"></script>
+    <script src="/static/density.js?v=20261109-detail-1"></script>
   </body>
 </html>

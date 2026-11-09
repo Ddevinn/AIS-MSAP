@@ -282,9 +282,9 @@ def build_tabular_parquet(path: Path, output_path: Path, manifest_path: Path, da
     schema = pa.schema([
         pa.field("mmsi", pa.int64()), pa.field("timestamp", pa.int64()),
         pa.field("lon", pa.float64()), pa.field("lat", pa.float64()),
-        pa.field("course", pa.float32()), pa.field("speed", pa.float32()),
-        pa.field("ship_type", pa.int16()), pa.field("length", pa.float32()), pa.field("width", pa.float32()),
-        pa.field("draught", pa.float32()), pa.field("heading", pa.float32()), pa.field("trajectory_id", pa.int32()),
+        pa.field("course", pa.float64()), pa.field("speed", pa.float64()),
+        pa.field("ship_type", pa.int16()), pa.field("length", pa.float64()), pa.field("width", pa.float64()),
+        pa.field("draught", pa.float64()), pa.field("heading", pa.float64()), pa.field("trajectory_id", pa.int32()),
     ])
     writer = None
     vessels: dict[int, int] = {}

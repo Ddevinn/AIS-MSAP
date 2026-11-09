@@ -178,6 +178,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("refreshBtn").addEventListener("click", loadAll);
   $("runCleanBtn").addEventListener("click", runCleaning);
   $("resetCleanBtn").addEventListener("click", resetCleaning);
+  $("exportCleanedBtn").addEventListener("click", () => {
+    const params = new URLSearchParams({ dataset_id: state.activeDatasetId });
+    window.location.href = `/api/export/cleaned?${params}`;
+  });
+  $("exportFilteredBtn").addEventListener("click", () => {
+    window.location.href = `/api/export/filtered${queryString()}`;
+  });
   $("applyBtn").addEventListener("click", () => {
     state.filters = collectFilters();
     loadAll();
@@ -221,8 +228,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     button.addEventListener("click", () => openMarkerEditor(button.dataset.markerAdd));
   });
   $("spatialModeSelect").addEventListener("change", updateSpatialMarkerOptions);
+  $("spatialMarkerSelect").addEventListener("change", updateSpatialExportButton);
   $("applySpatialBtn").addEventListener("click", applySpatialFilter);
   $("clearSpatialBtn").addEventListener("click", clearSpatialFilter);
+  $("exportSpatialBtn").addEventListener("click", () => {
+    window.location.href = `/api/export/spatial${queryString()}`;
+  });
   document.querySelectorAll("[data-marker-type]").forEach((button) => {
     button.addEventListener("click", () => selectMarkerType(button.dataset.markerType));
   });
@@ -368,7 +379,11 @@ async function pollStatus() {
     $("currentDatasetName").textContent = selectedDataset?.name || "尚未选择数据";
     $("emptyDatasetHint").hidden = Boolean(selectedDataset);
     $("clearDatasetBtn").hidden = !selectedDataset;
-    $("buildBtn").disabled = !selectedDataset || data.build_job?.status === "running" || data.clean_job?.status === "running";
+    const processing = data.build_job?.status === "running" || data.clean_job?.status === "running";
+    $("buildBtn").disabled = !selectedDataset || processing;
+    $("exportCleanedBtn").disabled = processing || !data.cleaned_dataset_ready;
+    $("exportFilteredBtn").disabled = processing || !data.dataset_ready;
+    updateSpatialExportButton();
     ["runCleanBtn", "resetCleanBtn", "reportExcelBtn", "refreshBtn", "reportRefreshBtn", "applyBtn", "clearBtn",
       "applyDirectionMmsiBtn", "fitMapBtn", "reloadTracksBtn", "grainSelect", "speedBinWidthSelect", "lengthBinWidthSelect",
       "directionBinWidthSelect", "headingBinWidthSelect"].forEach(id => { $(id).disabled = !data.dataset_ready; });
@@ -1151,8 +1166,7 @@ function initMap() {
     initMarkerLayers();
     initDensityLayers();
     renderMarkers();
-    $("mapStatus").textContent = state.activeKey ? "正在加载船舶轨迹" : "等待加载数据";
-    if (state.activeKey) refreshTrackTiles();
+    refreshTrackTiles();
     fitMapToDataOnce();
   });
   state.map.on("error", (event) => {
@@ -1740,7 +1754,9 @@ function loadMarkers() {
   try {
     const saved = JSON.parse(localStorage.getItem(`ais-platform-markers:user_${AIS.user.id}`) || "[]");
     state.markers = Array.isArray(saved)
-      ? saved.filter(validStoredMarker).map((marker) => ({ ...marker, visible: marker.visible !== false }))
+      ? saved.filter(validStoredMarker).map((marker) => ({
+        ...marker, visible: !["section", "region"].includes(marker.type) && marker.visible !== false,
+      }))
       : [];
   } catch {
     state.markers = [];
@@ -1824,6 +1840,15 @@ function updateSpatialMarkerOptions() {
     : '<option value="">暂无可用标记</option>';
   if (markers.some((marker) => String(marker.id) === current)) select.value = current;
   $("applySpatialBtn").disabled = !mode || !markers.length;
+  updateSpatialExportButton();
+}
+
+function updateSpatialExportButton() {
+  const mode = $("spatialModeSelect").value;
+  const markerId = Number($("spatialMarkerSelect").value);
+  const applied = state.spatialFilter?.mode === mode && state.spatialFilter.markerId === markerId;
+  $("exportSpatialBtn").disabled = !applied || $("exportFilteredBtn").disabled;
+  $("exportSpatialText").textContent = mode === "region" ? "导出区域 AIS 点" : "导出穿越轨迹";
 }
 
 async function applySpatialFilter() {
@@ -1832,7 +1857,9 @@ async function applySpatialFilter() {
   const marker = state.markers.find((item) => item.id === markerId && item.type === mode);
   if (!marker) return;
   state.spatialFilter = { mode, markerId };
-  state.filters = collectFilters();
+  state.filters.spatial_mode = mode;
+  state.filters.spatial_geometry = JSON.stringify(marker.points);
+  updateSpatialExportButton();
   $("spatialFilterStatus").textContent = `正在统计：${marker.name}`;
   $("spatialTrafficStats").textContent = "正在统计该标记范围…";
   renderMarkers();
@@ -1843,7 +1870,9 @@ async function applySpatialFilter() {
 
 async function clearSpatialFilter() {
   state.spatialFilter = null;
-  state.filters = collectFilters();
+  delete state.filters.spatial_mode;
+  delete state.filters.spatial_geometry;
+  updateSpatialExportButton();
   $("spatialFilterStatus").textContent = "正在查看全部数据";
   $("spatialTrafficStats").textContent = "选择截面或区域标记后显示交通流统计";
   renderMarkers();
@@ -1879,23 +1908,25 @@ function refreshTrackTiles() {
     $("mapStatus").textContent = "等待加载数据";
     return;
   }
+  if (!densityState.showTracks) {
+    $("mapStatus").textContent = "船舶轨迹已隐藏";
+    refreshDensityLayer();
+    return;
+  }
   const tileUrl = `${location.origin}/api/tiles/tracks/{z}/{x}/{y}.png${queryString({
     data_version: state.activeKey,
-    render_version: "orange-v7",
+    render_version: "full-zoom-v8",
     behavior: state.behaviorFilter,
   })}`;
   map.addSource(sourceId, {
     type: "raster",
     tiles: [tileUrl],
     tileSize: 256,
-    minzoom: 8,
-    maxzoom: 17,
   });
   map.addLayer({
     id: layerId,
     type: "raster",
     source: sourceId,
-    minzoom: 8,
     paint: {
       "raster-opacity": 0.95,
       "raster-hue-rotate": 180,
@@ -1909,7 +1940,9 @@ function refreshTrackTiles() {
   updateDensityStyle();
   refreshDensityLayer();
   $("mapStatus").textContent = "正在加载轨迹地图";
+  const source = map.getSource(sourceId);
   map.once("idle", () => {
+    if (map.getSource(sourceId) !== source) return;
     $("mapStatus").textContent = state.behaviorFilter
       ? `已显示${$("behaviorSelect").options[$("behaviorSelect").selectedIndex].text}轨迹`
       : state.spatialFilter ? "已显示所选标记对应的轨迹" : "轨迹地图已更新";
@@ -1987,6 +2020,7 @@ function resetFilters() {
   $("behaviorSelect").value = "";
   $("behaviorFilterStatus").textContent = "显示全部轨迹";
   state.filters = {};
+  updateSpatialExportButton();
   renderMarkers();
 }
 

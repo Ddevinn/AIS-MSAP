@@ -40,6 +40,7 @@ from backend.app.services.dataset import (
     active_parquet_path,
     build_parquet,
     cleaned_dataset_ready,
+    cleaned_parquet_path,
     dataset_ready,
     dataset_paths,
     inspect_pickle,
@@ -51,11 +52,19 @@ from backend.app.services.dataset import (
     source_dataset_ready,
     unregister_dataset,
 )
-from backend.app.services.exporter import export_excel
+from backend.app.services.exporter import export_excel, export_points_excel
 from backend.app.services.directions import direction_histograms, direction_time_series, validate_direction_bin_width
 from backend.app.services.density import density_features
 from backend.app.services.plots import density_png
-from backend.app.services.query import QueryFilters, normalize_behavior, normalize_spatial_filter
+from backend.app.services.query import (
+    QueryFilters,
+    analysis_source,
+    connect,
+    normalize_behavior,
+    normalize_spatial_filter,
+    points_sql,
+    trajectory_source,
+)
 from backend.app.services.raster_tracks import (
     cached_track_tile_png,
     clear_track_tile_cache,
@@ -544,6 +553,47 @@ def api_export_excel(direction_bin_width: int = 15, filters: QueryFilters = Depe
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/export/cleaned")
+def api_export_cleaned() -> FileResponse:
+    return _export_points(kind="cleaned")
+
+
+@app.get("/api/export/filtered")
+def api_export_filtered(filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
+    return _export_points(kind="filtered", filters=filters)
+
+
+@app.get("/api/export/spatial")
+def api_export_spatial(filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
+    if not filters.spatial_mode or not filters.spatial_geometry:
+        raise HTTPException(422, "请先应用区域或截面筛选。")
+    kind = "section_tracks" if filters.spatial_mode == "section" else "region"
+    return _export_points(kind=kind, filters=filters)
+
+
+def _export_points(*, kind: str, filters: QueryFilters | None = None) -> FileResponse:
+    with connect() as con:
+        # Materialize the query before a build, reset or removal can replace the Parquet.
+        with _build_lock, _clean_lock:
+            if _build_job["status"] == "running" or _clean_job["status"] == "running":
+                raise HTTPException(409, "请等数据加载或清洗完成后再导出。")
+            if kind == "cleaned":
+                if not cleaned_dataset_ready():
+                    raise HTTPException(409, "请先完成当前数据集的清洗。")
+                source, params = points_sql(cleaned_parquet_path()), []
+            else:
+                if not dataset_ready():
+                    raise HTTPException(409, "请先选择并加载数据。")
+                query_source = trajectory_source if kind == "section_tracks" else analysis_source
+                source, params = query_source(filters)
+            _call(con.execute, f"SELECT * FROM {source} ORDER BY mmsi, timestamp, trajectory_id, lon, lat", params)
+        path = _call(export_points_excel, con, kind=kind)
+    return FileResponse(
+        path, filename=path.name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 def _run_build(force: bool, dataset_id: str) -> None:

@@ -158,8 +158,8 @@ def spatial_points(filters: QueryFilters) -> list[tuple[float, float]]:
 def analysis_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
     """Return the exact table used by statistics and exports.
 
-    Region mode returns points inside the polygon. Section mode returns only
-    trajectory segments that actually cross the selected section.
+    Region mode returns points inside the polygon. Section mode returns one
+    row per intersecting pair of consecutive AIS points.
     """
     if filters and filters.spatial_mode == "section" and filters.spatial_geometry:
         return _section_source(filters, matched_trajectories=False)

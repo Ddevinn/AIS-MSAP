@@ -24,10 +24,7 @@ RENDER_SCALE = 2
 TRACK_COLOR = "0f4c81"
 TRACK_WIDTH = 1.8
 TRACK_OPACITY = 0.86
-CACHE_VERSION = "actual-tracks-v6-behavior-segments"
-LEGACY_COLOR = "0ea5e9"
-LEGACY_OPACITY = 0.72
-LEGACY_CACHE_VERSION = "actual-tracks-v3"
+CACHE_VERSION = "actual-tracks-v7-isolated-points"
 CACHE_DIR_PATH = CACHE_DIR / "actual_track_tiles"
 
 
@@ -40,12 +37,6 @@ def cached_track_tile_png(z: int, x: int, y: int, filters: QueryFilters | None =
     disk_path = _disk_path(key)
     if disk_path.exists():
         return disk_path.read_bytes()
-    legacy_key = _tile_key(z, x, y, filters, LEGACY_COLOR, TRACK_WIDTH, LEGACY_OPACITY, signature)
-    legacy_path = _disk_path(legacy_key, LEGACY_CACHE_VERSION)
-    if legacy_path.exists():
-        png = _recolor_legacy_tile(legacy_path)
-        _write_cache(disk_path, png)
-        return png
     return None
 
 
@@ -152,8 +143,14 @@ def _track_tile_cached(
 
     def flush() -> None:
         nonlocal path
-        if len(path) >= 2:
+        if not path:
+            return
+        if any(point != path[0] for point in path):
             draw.line(path, fill=fill, width=width, joint="curve")
+        else:
+            # Keep isolated or stationary AIS positions visible without joining separate segments.
+            px, py = path[0]
+            draw.ellipse((px - width, py - width, px + width, py + width), fill=fill)
         path = []
 
     with connect() as con:
@@ -245,22 +242,10 @@ def _data_signature() -> str:
     return f"{owner}:{path.resolve()}:{manifest.get('dataset_id')}:{manifest.get('data_role')}:{stat.st_size}:{stat.st_mtime_ns}"
 
 
-def _disk_path(key: tuple[object, ...], version: str = CACHE_VERSION) -> Path:
-    raw = json.dumps((version, key), ensure_ascii=True, separators=(",", ":"), default=str)
+def _disk_path(key: tuple[object, ...]) -> Path:
+    raw = json.dumps((CACHE_VERSION, key), ensure_ascii=True, separators=(",", ":"), default=str)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     return CACHE_DIR_PATH / digest[:2] / f"{digest}.png"
-
-
-def _recolor_legacy_tile(path: Path) -> bytes:
-    with Image.open(path) as source:
-        alpha = source.convert("RGBA").getchannel("A")
-    alpha = alpha.point(lambda value: min(255, round(value * TRACK_OPACITY / LEGACY_OPACITY)))
-    rgb = tuple(int(TRACK_COLOR[index:index + 2], 16) for index in (0, 2, 4))
-    image = Image.new("RGBA", (TILE_SIZE, TILE_SIZE), (*rgb, 0))
-    image.putalpha(alpha)
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=True)
-    return buffer.getvalue()
 
 
 def _write_cache(path: Path, png: bytes) -> None:

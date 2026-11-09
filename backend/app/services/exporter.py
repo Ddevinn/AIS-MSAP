@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import uuid
+from zoneinfo import ZoneInfo
 
+import numpy as np
+from duckdb import DuckDBPyConnection
+from duckdb.sqltypes import FLOAT
 from openpyxl import Workbook
+from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
@@ -72,12 +77,80 @@ def _autofit(ws) -> None:
         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 2, 36)
 
 
-def export_excel(filters: QueryFilters | None = None, direction_bin_width: int = 15) -> Path:
+def _excel_path(kind: str) -> Path:
     context = dataset_context.get()
     directory = EXPORT_DIR / f"user_{context.owner_id}" if context else EXPORT_DIR
     directory.mkdir(parents=True, exist_ok=True)
-    path = directory / f"ais_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.xlsx"
+    return directory / f"ais_{kind}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.xlsx"
 
+
+def export_points_excel(result: DuckDBPyConnection, *, kind: str) -> Path:
+    # One row per AIS point (or crossing), with a repeated header at Excel's sheet limit.
+    max_data_rows = 1_048_575
+    fields = result.description
+    columns = [field[0] for field in fields]
+    float32_indices = [index for index, field in enumerate(fields) if field[1] == FLOAT]
+    time_index = columns.index("timestamp")
+    headers = [*columns[:time_index + 1], "时间（北京时间）", *columns[time_index + 1:]]
+    local_zone = ZoneInfo("Asia/Shanghai")
+    wb = Workbook(write_only=True)
+    title = {
+        "cleaned": "清洗后数据",
+        "filtered": "筛选明细",
+        "region": "区域 AIS 点",
+        "section_tracks": "截面穿越轨迹",
+    }[kind]
+
+    def new_sheet(number: int):
+        sheet = wb.create_sheet(title if number == 1 else f"{title} {number}")
+        sheet.freeze_panes = "A2"
+        for index, header in enumerate(headers, 1):
+            sheet.column_dimensions[get_column_letter(index)].width = min(max(len(header) + 3, 13), 32)
+        sheet.column_dimensions[get_column_letter(time_index + 2)].width = 23
+        cells = [WriteOnlyCell(sheet, value=header) for header in headers]
+        for cell in cells:
+            cell.font = _HEADER_FONT
+            cell.fill = _HEADER_FILL
+        sheet.append(cells)
+        return sheet
+
+    sheet = new_sheet(1)
+    row_count = 0
+    while rows := result.fetchmany(10_000):
+        for row in rows:
+            if row_count and row_count % max_data_rows == 0:
+                sheet.close()
+                sheet = new_sheet(row_count // max_data_rows + 1)
+            timestamp = row[time_index]
+            time_cell = None
+            if timestamp is not None:
+                try:
+                    time_cell = datetime.fromtimestamp(timestamp, timezone.utc).astimezone(local_zone).replace(tzinfo=None)
+                except (OverflowError, OSError, ValueError):
+                    pass  # Keep the original Unix timestamp even outside Excel's date range.
+            if time_cell is not None:
+                time_cell = WriteOnlyCell(sheet, value=time_cell)
+                time_cell.number_format = "yyyy-mm-dd hh:mm:ss"
+            values = list(row)
+            # Write legacy single-precision fields as their shortest round-trip decimal.
+            for index in float32_indices:
+                if values[index] is not None:
+                    values[index] = float(str(np.float32(values[index])))
+            values.insert(time_index + 1, time_cell)
+            sheet.append(values)
+            row_count += 1
+
+    path = _excel_path(kind)
+    try:
+        wb.save(path)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def export_excel(filters: QueryFilters | None = None, direction_bin_width: int = 15) -> Path:
+    path = _excel_path("report")
     wb = Workbook()
 
     # ── 1. 总览 ─────────────────────────────────────────────
