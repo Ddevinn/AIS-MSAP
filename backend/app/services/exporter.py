@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 import uuid
@@ -23,7 +24,7 @@ from backend.app.services.analysis import (
     summary,
     time_series,
 )
-from backend.app.services.query import QueryFilters
+from backend.app.services.query import QueryFilters, connect, points_sql
 from backend.app.services.directions import direction_histograms
 
 _HEADER_FILL = PatternFill("solid", fgColor="1E3A5F")
@@ -77,11 +78,36 @@ def _autofit(ws) -> None:
         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = min(max_len + 2, 36)
 
 
-def _excel_path(kind: str) -> Path:
+def _export_path(kind: str, suffix: str = "xlsx") -> Path:
     context = dataset_context.get()
     directory = EXPORT_DIR / f"user_{context.owner_id}" if context else EXPORT_DIR
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"ais_{kind}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.xlsx"
+    return directory / f"ais_{kind}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{suffix}"
+
+
+def export_rejected_csv(source: Path) -> Path:
+    path = _export_path("rejected", "csv")
+    try:
+        with connect() as con, path.open("w", newline="", encoding="utf-8-sig") as stream:
+            result = con.execute(f"SELECT * FROM {points_sql(source)} ORDER BY source_point_id")
+            writer = csv.writer(stream)
+            columns = [column[0] for column in result.description]
+            text_columns = [columns.index(name) for name in (
+                "source_file", "source_sheet", "duplicate_retained_sheet", "prev_source_sheet",
+            )]
+            writer.writerow(columns)
+            while rows := result.fetchmany(10_000):
+                for row in rows:
+                    values = list(row)
+                    for index in text_columns:
+                        name = values[index]
+                        if name and name.lstrip().startswith(("=", "+", "-", "@")):
+                            values[index] = "'" + name
+                    writer.writerow(values)
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return path
 
 
 def export_points_excel(result: DuckDBPyConnection, *, kind: str) -> Path:
@@ -140,7 +166,7 @@ def export_points_excel(result: DuckDBPyConnection, *, kind: str) -> Path:
             sheet.append(values)
             row_count += 1
 
-    path = _excel_path(kind)
+    path = _export_path(kind)
     try:
         wb.save(path)
     except Exception:
@@ -150,7 +176,7 @@ def export_points_excel(result: DuckDBPyConnection, *, kind: str) -> Path:
 
 
 def export_excel(filters: QueryFilters | None = None, direction_bin_width: int = 15) -> Path:
-    path = _excel_path("report")
+    path = _export_path("report")
     wb = Workbook()
 
     # ── 1. 总览 ─────────────────────────────────────────────

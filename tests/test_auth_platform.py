@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import io
 import json
 import pickle
@@ -62,8 +63,8 @@ class AccountPlatformTests(unittest.TestCase):
         return client, self.admin.get("/api/admin/users").json()["users"][-1]["id"]
 
     def upload(self, client, count=3, name="船舶数据"):
-        contents = "mmsi,updatetime,lon,lat,speed,course,heading,ship_type,length,width\n"
-        contents += "".join(f"413523230,2024-01-01 12:0{i}:00,{110 + i * 0.001},20,5,90,91,70,100,20\n" for i in range(count))
+        contents = "mmsi,updatetime,lon,lat,speed,course,heading,ship_type,length,width,draught\n"
+        contents += "".join(f"413523230,2024-01-01 12:0{i}:00,{110 + i * 0.001},20,5,90,91,70,100,20,4\n" for i in range(count))
         response = client.post("/api/datasets/upload", data={"name": name}, files={"file": ("points.csv", contents.encode(), "text/csv")})
         self.assertEqual(response.status_code, 200, response.text)
         return response.json()["dataset"]["id"]
@@ -71,14 +72,98 @@ class AccountPlatformTests(unittest.TestCase):
     def build(self, client):
         response = client.post("/api/build")
         self.assertEqual(response.status_code, 200, response.text)
+        state = self.wait_for_job(client, "build_job")
+        self.assertEqual(state["build_job"]["status"], "done", state)
+        return state
+
+    def wait_for_job(self, client, job_name):
         end = time.monotonic() + 10
         while time.monotonic() < end:
             state = client.get("/api/status").json()
-            if state["build_job"]["status"] != "running":
-                self.assertEqual(state["build_job"]["status"], "done", state)
+            if state[job_name]["status"] != "running":
                 return state
             time.sleep(0.03)
-        self.fail("Temporary dataset build did not finish")
+        self.fail(f"Temporary {job_name} did not finish")
+
+    def test_field_quality_confirmation_cancel_retry_and_rejected_export(self):
+        client = self.admin
+        csv_text = (
+            "mmsi,updatetime,lon,lat,speed,course,type,heading,length,width,draught\n"
+            "413523230,2024-01-01 12:00:00,110,20,5,90,70,91,100,20,4\n"
+            "413523230,2024-01-01 12:00:00,110,20,5,90,999,91,100,20,4\n"
+            "413523230,2024-01-01 12:01:00,110.001,20,bad-speed,bad-course,70,91,100,20,4\n"
+            "413523230,2024-01-01 12:02:00,115,20,5,90,70,91,100,20,4\n"
+            "413523230,2024-01-01 19:03:00,110,20,5,90,70,91,100,20,4\n"
+        )
+        response = client.post("/api/datasets/upload", files={"file": ("audit.csv", csv_text.encode(), "text/csv")})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(client.post("/api/build").status_code, 200)
+        waiting = self.wait_for_job(client, "build_job")
+        self.assertFalse(waiting["dataset_ready"])
+        self.assertEqual(waiting["build_job"]["status"], "awaiting_confirmation")
+        warnings = " ".join(waiting["build_job"]["warnings"])
+        self.assertIn("type", warnings)
+        self.assertIn("speed", warnings)
+        first_attempt = waiting["build_job"]["attempt_id"]
+        decision = "/api/build/decision"
+        self.assertEqual(client.post(decision, json={"attempt_id": "wrong", "proceed": True}).status_code, 409)
+        self.assertEqual(client.post(decision, json={"attempt_id": first_attempt, "proceed": False}).status_code, 200)
+        self.assertFalse(client.get("/api/status").json()["dataset_ready"])
+
+        self.assertEqual(client.post("/api/build").status_code, 200)
+        waiting = self.wait_for_job(client, "build_job")
+        attempt = waiting["build_job"]["attempt_id"]
+        self.assertNotEqual(attempt, first_attempt)
+        self.assertEqual(client.post(decision, json={"attempt_id": attempt, "proceed": True}).status_code, 200)
+        loaded = client.get("/api/status").json()
+        self.assertEqual(loaded["manifest"]["usable_rows"], 4)
+        self.assertTrue(loaded["manifest"]["ship_type_available"])
+        self.assertEqual(client.get("/api/summary").json()["point_count"], 4)
+        self.assertEqual(client.get("/api/summary?ship_type=70").json()["point_count"], 3)
+
+        self.assertEqual(client.post("/api/cleaning/run").status_code, 200)
+        cleaned = self.wait_for_job(client, "clean_job")
+        self.assertEqual(cleaned["clean_job"]["status"], "done", cleaned)
+        counts = cleaned["cleaning_manifest"]["counts"]
+        response = client.get("/api/export/rejected")
+        self.assertEqual(response.status_code, 200, response.text)
+        rejected = list(csv.DictReader(io.StringIO(response.content.decode("utf-8-sig"))))
+        self.assertEqual(len(rejected), counts["removed_rows"])
+        self.assertEqual(counts["raw_rows"], len(rejected) + counts["output_rows"])
+        self.assertEqual({row["rejected_stage"] for row in rejected}, {"validation", "duplicate", "motion"})
+        by_record = {row["source_record"]: row for row in rejected}
+        self.assertEqual(by_record["2"]["duplicate_retained_record"], "1")
+        self.assertEqual(json.loads(by_record["2"]["source_invalid_values"])["type"], "999")
+        self.assertIn("航速", by_record["3"]["reason_labels"])
+        self.assertEqual(by_record["3"]["reason_codes"], "invalid_speed|invalid_course")
+        self.assertEqual(json.loads(by_record["3"]["source_invalid_values"])["speed"], "bad-speed")
+        self.assertIn("jump_point", by_record["4"]["reason_codes"])
+        self.assertEqual(by_record["4"]["prev_source_record"], "1")
+        self.assertNotIn("5", by_record)
+        self.assertEqual(client.post("/api/cleaning/reset").status_code, 200)
+        self.assertEqual(client.get("/api/export/rejected").status_code, 409)
+
+    def test_missing_ship_type_can_load_but_unusable_core_fields_cannot(self):
+        client = self.admin
+        headers = "mmsi,updatetime,lon,lat,speed,course\n"
+        valid = "413523230,2024-01-01 12:00:00,110,20,5,90\n"
+        self.assertEqual(client.post("/api/datasets/upload", files={"file": ("no-type.csv", (headers + valid).encode())}).status_code, 200)
+        self.assertEqual(client.post("/api/build").status_code, 200)
+        waiting = self.wait_for_job(client, "build_job")
+        self.assertEqual(waiting["build_job"]["status"], "awaiting_confirmation")
+        attempt = waiting["build_job"]["attempt_id"]
+        self.assertEqual(client.post("/api/build/decision", json={"attempt_id": attempt, "proceed": True}).status_code, 200)
+        self.assertFalse(client.get("/api/status").json()["manifest"]["ship_type_available"])
+        self.assertEqual(client.get("/api/ship-types").json()[0]["ship_type"], -1)
+
+        invalid = "413523230,2024-01-01 12:00:00,500,20,5,90\n413523230,2024-01-01 12:01:00,110,200,5,90\n"
+        self.assertEqual(client.post("/api/datasets/upload", files={"file": ("bad.csv", (headers + invalid).encode())}).status_code, 200)
+        self.assertEqual(client.post("/api/build").status_code, 200)
+        failed = self.wait_for_job(client, "build_job")
+        self.assertEqual(failed["build_job"]["status"], "error")
+        self.assertIn("lon", failed["build_job"]["message"])
+        self.assertFalse(failed["dataset_ready"])
+
 
     def test_pages_and_every_data_entry_require_login(self):
         anonymous = self.client()

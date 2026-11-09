@@ -125,6 +125,27 @@ class IngestionTests(unittest.TestCase):
             self.assertEqual(points["heading"].to_pylist(), [206, 206])
             self.assertAlmostEqual(points["draught"][0].as_py(), 3.8, places=5)
 
+    def test_excel_source_records_keep_actual_sheet_row_after_sorting(self):
+        from openpyxl import Workbook
+
+        path = self.root / "quality.xlsx"
+        book = Workbook()
+        sheet = book.active
+        sheet.title = "Positions"
+        sheet.append([])
+        sheet.append(["mmsi", "updatetime", "lon", "lat", "speed", "course", "type"])
+        sheet.append([413523230, "2024-01-01 12:01:00", 110, 20, 5, 90, "not a code"])
+        sheet.append([])
+        sheet.append([413523230, "2024-01-01 12:00:00", 110, 20, 5, 90, 70])
+        book.save(path)
+
+        manifest = self.build(path)
+        rows = pq.read_table(self.root / "points.parquet")
+        self.assertEqual(rows["source_sheet"].to_pylist(), ["Positions", "Positions"])
+        self.assertEqual(rows["source_record"].to_pylist(), [5, 3])
+        self.assertEqual(rows["ship_type"].to_pylist(), [70, -1])
+        self.assertEqual(manifest["field_quality"]["Positions"]["ship_type"]["invalid"], 1)
+
     def test_legacy_pickle_still_builds_and_cleans(self):
         path = self.root / "legacy.pkl"
         pd.to_pickle([np.asarray([[413523230, 1643715164, 110.12933, 20.21789, 196.8, 9.7, 70, 123, 20]], dtype=float)], path)
@@ -154,7 +175,8 @@ class IngestionTests(unittest.TestCase):
             workbook.close()
         self.build(csv_path)
         csv_points = pq.read_table(self.root / "points.parquet")
-        self.assertTrue(excel.equals(csv_points))
+        canonical = [column for column in excel.column_names if not column.startswith("source_")]
+        self.assertTrue(excel.select(canonical).equals(csv_points.select(canonical)))
 
 
 if __name__ == "__main__":

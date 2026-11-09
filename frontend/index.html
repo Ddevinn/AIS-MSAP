@@ -6,7 +6,7 @@
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261015-marker-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261109-field-quality-1" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
@@ -92,7 +92,7 @@
                 <label class="field">CSV 编码<select id="importEncodingSelect"><option value="auto">自动识别 UTF-8 / GB18030</option><option value="utf-8-sig">UTF-8</option><option value="gb18030">GB18030 / GBK</option></select></label>
                 <input id="datasetFileInput" type="file" accept=".csv,.xlsx,.xls,.pkl,.pickle" hidden />
                 <button id="uploadDatasetBtn" class="btn ghost full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>选择 Excel / CSV / PKL 文件</button>
-                <div id="importMappingPanel" class="import-mapping" hidden></div>
+                <div id="importMappingPanel" class="import-mapping" aria-live="polite" hidden></div>
               </div>
             </details>
             <button id="buildBtn" class="btn primary full"><svg class="ui-icon" aria-hidden="true"><use href="#i-upload" /></svg>加载数据</button>
@@ -177,6 +177,8 @@
               <div class="progress-track"><i id="cleanProgressFill" style="width:0%"></i></div>
             </div>
             <div id="qualityPanel" class="quality-list"></div>
+            <button id="exportRejectedBtn" type="button" class="btn ghost full" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg>导出剔除记录 CSV</button>
+            <small id="rejectedExportHint" class="muted" hidden></small>
             <div id="cleaningSummary" class="mini-metric-grid"></div>
           </section>
         </aside>
@@ -402,7 +404,17 @@
     <script src="/static/vendor/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261109-marker-visibility-1"></script>
+    <script src="/static/app.js?v=20261109-field-quality-1"></script>
     <script src="/static/density.js?v=20261109-detail-1"></script>
+    <dialog id="buildQualityDialog" class="quality-dialog" aria-labelledby="buildQualityTitle">
+      <h2 id="buildQualityTitle">发现字段质量问题</h2>
+      <p>请核对以下字段及对分析的影响。</p>
+      <ul id="buildQualityWarnings" tabindex="0"></ul>
+      <p id="buildQualityError" role="alert" hidden></p>
+      <div class="quality-dialog-actions">
+        <button id="cancelBuildQualityBtn" class="btn ghost" type="button" autofocus>返回检查字段</button>
+        <button id="confirmBuildQualityBtn" class="btn dark" type="button">继续加载</button>
+      </div>
+    </dialog>
   </body>
 </html>

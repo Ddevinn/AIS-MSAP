@@ -559,3 +559,18 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .import-mapping > small { display: block; margin: 5px 0 8px; color: #64748b; }
 .import-mapping > div { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; overflow-wrap: anywhere; }
 .import-mapping p { color: #92400e; margin: 8px 0 0; }
+
+.quality-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 24px;
+  border: 1px solid #dbe4ee;
+  border-radius: 14px;
+  color: #23364c;
+  background: #fff;
+}
+.quality-dialog::backdrop { background: rgba(14, 29, 48, 0.5); }
+.quality-dialog h2 { margin: 0 0 8px; }
+.quality-dialog ul { max-height: 45vh; overflow: auto; padding-left: 24px; }
+.quality-dialog li { margin-bottom: 8px; overflow-wrap: anywhere; }
+.quality-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }

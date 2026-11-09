@@ -4,6 +4,7 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Callable
 
 from pydantic import BaseModel, Field
@@ -58,10 +59,13 @@ def read_cleaning_manifest(dataset_id: str | None = None) -> dict[str, Any] | No
     return read_dataset_cleaning_manifest(dataset_id)
 
 
+def rejected_parquet_path(dataset_id: str | None = None) -> Path:
+    return cleaned_parquet_path(dataset_id).with_name("ais_points_rejected.parquet")
+
+
 def reset_cleaning_result(dataset_id: str | None = None) -> None:
-    for path in (cleaned_parquet_path(dataset_id), cleaning_manifest_path(dataset_id)):
-        if path.exists():
-            path.unlink()
+    for path in (cleaning_manifest_path(dataset_id), cleaned_parquet_path(dataset_id), rejected_parquet_path(dataset_id)):
+        path.unlink(missing_ok=True)
 
 
 def run_cleaning(
@@ -82,22 +86,45 @@ def run_cleaning(
     _validate_config(config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    for stale_path in (output_path,):
-        if stale_path.exists():
-            stale_path.unlink()
 
     started = time.perf_counter()
     emit(progress, "preparing", "准备清洗任务", percent=3)
 
+    with TemporaryDirectory(prefix="cleaning-", dir=output_path.parent) as directory:
+        staged = Path(directory)
+        manifest = _stage_cleaning(
+            paths, source_path, staged, config, progress, started,
+        )
+        manifest["parquet"] = str(output_path)
+        staged_manifest = staged / "manifest.json"
+        staged_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # The manifest is the publication marker for both results.
+        manifest_path.unlink(missing_ok=True)
+        (staged / "cleaned.parquet").replace(output_path)
+        (staged / "rejected.parquet").replace(rejected_parquet_path(resolved_dataset_id))
+        staged_manifest.replace(manifest_path)
+    emit(progress, "done", "清洗完成", manifest, percent=100)
+    return manifest
+
+
+def _stage_cleaning(paths, source_path, staged, config, progress, started):
     source = points_sql(source_path)
     with connect() as con:
         source_columns = {row[0] for row in con.execute(f"DESCRIBE SELECT * FROM {source}").fetchall()}
+        if "source_point_id" not in source_columns:
+            source = f"""(
+                SELECT *, row_number() OVER () AS source_point_id, NULL::VARCHAR AS source_sheet,
+                       NULL::BIGINT AS source_record, NULL::VARCHAR AS source_invalid_values
+                FROM {source}
+            ) AS legacy_points"""
         extra_columns = [name for name in ("draught", "heading") if name in source_columns]
         extra_sql = "".join(f", {name}" for name in extra_columns)
         emit(progress, "validating", "校验字段范围和基础格式", percent=8)
         con.execute(_base_table_sql(source), _base_params(config))
         emit(progress, "deduplicating", "去除精确重复点", percent=18)
-        con.execute(_unique_table_sql(config))
+        con.execute(_ranked_table_sql(config))
+        con.execute("CREATE TEMP TABLE cleaning_unique AS SELECT * FROM cleaning_ranked WHERE duplicate_rank = 1")
         emit(progress, "motion", "识别跳点、漂移点和速度突变点", percent=42)
         con.execute(_flagged_table_sql(config))
         emit(progress, "segmenting", "切分轨迹片段并标注航行状态", percent=68)
@@ -129,25 +156,35 @@ def run_cleaning(
                 FROM cleaning_final
                 ORDER BY mmsi, timestamp, trajectory_id
             )
-            TO '{_sql_path(output_path)}'
+            TO '{_sql_path(staged / 'cleaned.parquet')}'
             (FORMAT PARQUET, COMPRESSION ZSTD)
             """
         )
 
+        emit(progress, "audit", "保存逐条剔除记录", percent=91)
+        con.execute(f"""
+            COPY ({_rejected_sql(paths.source_path.name, extra_columns, config)})
+            TO '{_sql_path(staged / 'rejected.parquet')}' (FORMAT PARQUET, COMPRESSION ZSTD)
+        """)
         emit(progress, "summarizing", "汇总清洗结果", percent=95)
         counts = _counts(con)
+        rejected_count = con.execute(
+            f"SELECT count(*) FROM {points_sql(staged / 'rejected.parquet')}"
+        ).fetchone()[0]
+        if rejected_count != counts["removed_rows"]:
+            raise RuntimeError("剔除记录数与清洗汇总不一致。")
         ranges = _ranges(con)
 
-    manifest = {
-        "dataset_id": resolved_dataset_id,
+    return {
+        "dataset_id": paths.dataset_id,
         "dataset_name": paths.name,
         "data_role": "cleaned",
         "source_parquet": str(source_path),
-        "parquet": str(output_path),
+        "rejected_records_available": True,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "elapsed_seconds": round(time.perf_counter() - started, 2),
         "config": config.model_dump(),
-        "source_manifest": read_manifest(resolved_dataset_id),
+        "source_manifest": read_manifest(paths.dataset_id),
         "counts": counts,
         "row_count": counts["output_rows"],
         "trajectory_count": ranges["trajectory_count"],
@@ -177,9 +214,6 @@ def run_cleaning(
             "nav_state",
         ],
     }
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    emit(progress, "done", "清洗完成", manifest, percent=100)
-    return manifest
 
 
 def emit(
@@ -245,29 +279,91 @@ def _base_params(config: CleaningConfig) -> list[Any]:
     ]
 
 
-def _unique_table_sql(config: CleaningConfig) -> str:
-    duplicate_rank = (
-        "row_number() OVER (PARTITION BY mmsi, timestamp, lon, lat ORDER BY trajectory_id)"
-        if config.remove_exact_duplicates
-        else "1"
+VALIDATION_REASONS = {
+    "valid_mmsi": "invalid_mmsi",
+    "valid_timestamp": "invalid_timestamp",
+    "valid_position": "invalid_position",
+    "valid_speed": "invalid_speed",
+    "valid_course": "invalid_course",
+    "valid_length": "invalid_length",
+    "valid_width": "invalid_width",
+}
+
+
+REASON_LABELS = {
+    "invalid_mmsi": "MMSI 无效",
+    "invalid_timestamp": "时间无效",
+    "invalid_position": "经纬度缺失或超范围",
+    "invalid_speed": "航速缺失或超范围",
+    "invalid_course": "对地航向缺失或超范围",
+    "invalid_length": "船长为负值",
+    "invalid_width": "船宽为负值",
+    "duplicate_point": "重复轨迹点",
+    "invalid_time_order": "相邻点时间未递增",
+    "jump_point": "推算航速超过跳点阈值",
+    "acceleration_point": "航速变化率超过阈值",
+}
+
+
+def _ranked_table_sql(config: CleaningConfig) -> str:
+    window = "PARTITION BY mmsi, timestamp, lon, lat ORDER BY trajectory_id, source_point_id"
+    duplicate_rank = f"row_number() OVER ({window})" if config.remove_exact_duplicates else "1"
+    retained_columns = ", ".join(
+        f"first_value(source_{column}) OVER ({window}) AS duplicate_retained_{column}"
+        if config.remove_exact_duplicates else f"source_{column} AS duplicate_retained_{column}"
+        for column in ("point_id", "sheet", "record")
     )
+    valid = " AND ".join(VALIDATION_REASONS)
     return f"""
-        CREATE OR REPLACE TEMP TABLE cleaning_unique AS
-        SELECT *
-        FROM (
-            SELECT
-                *,
-                {duplicate_rank} AS duplicate_rank
-            FROM cleaning_base
-            WHERE valid_mmsi
-              AND valid_timestamp
-              AND valid_position
-              AND valid_speed
-              AND valid_course
-              AND valid_length
-              AND valid_width
+        CREATE OR REPLACE TEMP TABLE cleaning_ranked AS
+        SELECT *, {duplicate_rank} AS duplicate_rank, {retained_columns}
+        FROM cleaning_base
+        WHERE {valid}
+    """
+
+
+def _rejected_sql(filename: str, extra_columns: list[str], config: CleaningConfig) -> str:
+    validation_reasons = ", ".join(
+        f"CASE WHEN {check} IS NOT TRUE THEN '{reason}' END"
+        for check, reason in VALIDATION_REASONS.items()
+    )
+    any_invalid = " OR ".join(f"{check} IS NOT TRUE" for check in VALIDATION_REASONS)
+    extra_sql = "".join(f", {name}" for name in extra_columns)
+    filename_sql = filename.replace("'", "''")
+    labels = " ".join(f"WHEN '{code}' THEN '{label}'" for code, label in REASON_LABELS.items())
+    return f"""
+        WITH rejected AS (
+            SELECT *, 'validation' AS rejected_stage,
+                   concat_ws('|', {validation_reasons}) AS reason_codes
+            FROM cleaning_base WHERE {any_invalid}
+            UNION ALL BY NAME
+            SELECT *, 'duplicate' AS rejected_stage, 'duplicate_point' AS reason_codes
+            FROM cleaning_ranked WHERE duplicate_rank > 1
+            UNION ALL BY NAME
+            SELECT *, 'motion' AS rejected_stage,
+                   concat_ws('|',
+                       CASE WHEN invalid_time_order THEN 'invalid_time_order' END,
+                       CASE WHEN jump_point THEN 'jump_point' END,
+                       CASE WHEN acceleration_point THEN 'acceleration_point' END
+                   ) AS reason_codes
+            FROM cleaning_flagged
+            WHERE invalid_time_order OR jump_point OR acceleration_point
         )
-        WHERE duplicate_rank = 1
+        SELECT '{filename_sql}' AS source_file, source_sheet, source_record, source_point_id,
+               mmsi, timestamp, lon, lat, speed, course, ship_type, length, width{extra_sql}, trajectory_id,
+               rejected_stage, reason_codes,
+               array_to_string(list_transform(string_split(reason_codes, '|'),
+                   code -> CASE code {labels} END), '；') AS reason_labels,
+               source_invalid_values,
+               CASE WHEN rejected_stage = 'duplicate' THEN duplicate_retained_point_id END AS duplicate_retained_id,
+               CASE WHEN rejected_stage = 'duplicate' THEN duplicate_retained_sheet END AS duplicate_retained_sheet,
+               CASE WHEN rejected_stage = 'duplicate' THEN duplicate_retained_record END AS duplicate_retained_record,
+               prev_source_point_id, prev_source_sheet, prev_source_record, prev_timestamp, prev_lon, prev_lat, prev_speed,
+               time_delta_seconds, distance_nm, implied_speed_knots, acceleration_knots_per_min,
+               {config.speed_min} AS speed_min_knots, {config.speed_max} AS speed_max_knots,
+               {config.max_jump_speed_knots} AS max_jump_speed_knots,
+               {config.max_acceleration_knots_per_min} AS max_acceleration_knots_per_min
+        FROM rejected ORDER BY source_point_id
     """
 
 
@@ -277,12 +373,16 @@ def _flagged_table_sql(config: CleaningConfig) -> str:
         WITH ordered AS (
             SELECT
                 *,
+                lag(source_point_id) OVER trajectory_order AS prev_source_point_id,
+                lag(source_sheet) OVER trajectory_order AS prev_source_sheet,
+                lag(source_record) OVER trajectory_order AS prev_source_record,
                 lag(timestamp) OVER (PARTITION BY mmsi ORDER BY timestamp, trajectory_id, lon, lat) AS prev_timestamp,
                 lag(lon) OVER (PARTITION BY mmsi ORDER BY timestamp, trajectory_id, lon, lat) AS prev_lon,
                 lag(lat) OVER (PARTITION BY mmsi ORDER BY timestamp, trajectory_id, lon, lat) AS prev_lat,
                 lag(speed) OVER (PARTITION BY mmsi ORDER BY timestamp, trajectory_id, lon, lat) AS prev_speed,
                 lag(course) OVER (PARTITION BY mmsi ORDER BY timestamp, trajectory_id, lon, lat) AS prev_course
             FROM cleaning_unique
+            WINDOW trajectory_order AS (PARTITION BY mmsi ORDER BY timestamp, trajectory_id, lon, lat)
         ),
         motion AS (
             SELECT
@@ -488,12 +588,12 @@ def _counts(con) -> dict[str, int]:
         """
         SELECT
             count(*)::UBIGINT AS raw_rows,
-            count(*) FILTER (WHERE NOT valid_mmsi)::UBIGINT AS invalid_mmsi_rows,
-            count(*) FILTER (WHERE NOT valid_timestamp)::UBIGINT AS invalid_timestamp_rows,
-            count(*) FILTER (WHERE NOT valid_position)::UBIGINT AS invalid_position_rows,
-            count(*) FILTER (WHERE NOT valid_speed)::UBIGINT AS invalid_speed_rows,
-            count(*) FILTER (WHERE NOT valid_course)::UBIGINT AS invalid_course_rows,
-            count(*) FILTER (WHERE NOT valid_length OR NOT valid_width)::UBIGINT AS invalid_size_rows
+            count(*) FILTER (WHERE valid_mmsi IS NOT TRUE)::UBIGINT AS invalid_mmsi_rows,
+            count(*) FILTER (WHERE valid_timestamp IS NOT TRUE)::UBIGINT AS invalid_timestamp_rows,
+            count(*) FILTER (WHERE valid_position IS NOT TRUE)::UBIGINT AS invalid_position_rows,
+            count(*) FILTER (WHERE valid_speed IS NOT TRUE)::UBIGINT AS invalid_speed_rows,
+            count(*) FILTER (WHERE valid_course IS NOT TRUE)::UBIGINT AS invalid_course_rows,
+            count(*) FILTER (WHERE valid_length IS NOT TRUE OR valid_width IS NOT TRUE)::UBIGINT AS invalid_size_rows
         FROM cleaning_base
         """
     ).fetchone()
@@ -507,23 +607,7 @@ def _counts(con) -> dict[str, int]:
         "invalid_size_rows",
     ]
     counts = dict(zip(keys, [int(value) for value in row]))
-    duplicate_count = con.execute(
-        """
-        SELECT
-            (
-                SELECT count(*)::UBIGINT
-                FROM cleaning_base
-                WHERE valid_mmsi
-                  AND valid_timestamp
-                  AND valid_position
-                  AND valid_speed
-                  AND valid_course
-                  AND valid_length
-                  AND valid_width
-            )
-            - (SELECT count(*)::UBIGINT FROM cleaning_unique)
-        """
-    ).fetchone()[0]
+    duplicate_count = con.execute("SELECT count(*) FROM cleaning_ranked WHERE duplicate_rank > 1").fetchone()[0]
     flags = con.execute(
         """
         SELECT

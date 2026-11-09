@@ -43,6 +43,18 @@ FIELD_ALIASES = {
     "draught": ("draught", "draft", "ship_draught", "ship_draft", "吃水", "吃水深度", "吃水米"),
     "heading": ("heading", "true_heading", "trueheading", "艏向", "船首向", "船艏向"),
 }
+SOURCE_COLUMNS = ("source_point_id", "source_sheet", "source_record", "source_invalid_values", "source_usable")
+VALUE_BOUNDS = {
+    "mmsi": (100_000_000, 999_999_999),
+    "lon": (-180, 180),
+    "lat": (-90, 90),
+    "speed": (0, 102.2),
+    "course": (0, 360),
+    "ship_type": (20, 99),
+    "length": (0, math.inf),
+    "width": (0, math.inf),
+    "draught": (0, math.inf),
+}
 NULL_TEXT = {"", "null", "none", "nan", "nat", "n/a", "na", "-", "--", "未知", "无"}
 
 
@@ -121,7 +133,7 @@ def source_chunks(
                 frame = frame.iloc[:, :len(columns)]
                 frame.columns = columns
                 if len(frame):
-                    yield "CSV", columns, frame, {"encoding": encoding, "delimiter": delimiter}
+                    yield "CSV", columns, frame.set_axis(frame.index + 1), {"encoding": encoding, "delimiter": delimiter}
         return
     if suffix == ".xlsx":
         from openpyxl import load_workbook
@@ -132,29 +144,32 @@ def source_chunks(
             for sheet in workbook.worksheets:
                 if sheet_name and sheet.title != sheet_name:
                     continue
-                rows = sheet.iter_rows(values_only=True)
-                header = next((row for row in rows if any(value is not None for value in row)), None)
+                rows = enumerate(sheet.iter_rows(values_only=True), 1)
+                header = next((row for _, row in rows if any(value is not None for value in row)), None)
                 if header is None:
                     continue
                 columns = _headers(header)
                 # Ignore genuinely empty worksheets, including the sample's Sheet1.
-                first = next((row for row in rows if any(value is not None for value in row)), None)
+                first = next(((row_number, row) for row_number, row in rows if any(value is not None for value in row)), None)
                 if first is None:
                     continue
                 try:
                     resolve_fields(columns)
                 except ValueError as exc:
                     raise ValueError(f"工作表“{sheet.title}”：{exc}") from exc
-                batch = [first[:len(columns)]]
-                for row in rows:
+                batch = [first[1][:len(columns)]]
+                record_numbers = [first[0]]
+                for row_number, row in rows:
                     if not any(value is not None for value in row):
                         continue
                     batch.append(row[:len(columns)])
+                    record_numbers.append(row_number)
                     if len(batch) >= chunk_rows:
-                        yield sheet.title, columns, pd.DataFrame(batch, columns=columns), {}
+                        yield sheet.title, columns, pd.DataFrame(batch, columns=columns, index=record_numbers), {}
                         batch = []
+                        record_numbers = []
                 if batch:
-                    yield sheet.title, columns, pd.DataFrame(batch, columns=columns), {}
+                    yield sheet.title, columns, pd.DataFrame(batch, columns=columns, index=record_numbers), {}
         finally:
             workbook.close()
         return
@@ -174,6 +189,7 @@ def source_chunks(
                     raise ValueError(f"工作表“{sheet.name}”：{exc}") from exc
                 for start in range(1, sheet.nrows, chunk_rows):
                     batch = []
+                    record_numbers = []
                     for index in range(start, min(start + chunk_rows, sheet.nrows)):
                         row = sheet.row_values(index)[:len(columns)]
                         for col, cell in enumerate(sheet.row(index)[:len(columns)]):
@@ -181,8 +197,9 @@ def source_chunks(
                                 row[col] = xlrd.xldate_as_datetime(cell.value, workbook.datemode)
                         if any(value not in (None, "") for value in row):
                             batch.append(row)
+                            record_numbers.append(index + 1)
                     if batch:
-                        yield sheet.name, columns, pd.DataFrame(batch, columns=columns), {}
+                        yield sheet.name, columns, pd.DataFrame(batch, columns=columns, index=record_numbers), {}
         finally:
             workbook.release_resources()
         return
@@ -238,7 +255,8 @@ def normalize_frame(frame: pd.DataFrame, mapping: dict[str, str], source_timezon
                 # Reject fractional identifiers rather than silently truncating them.
                 bad_integer = converted.notna() & converted.mod(1).ne(0)
                 if field == "ship_type":
-                    bad_integer |= converted.notna() & ~converted.between(-32768, 32767)
+                    bad_integer |= converted.notna() & ~converted.isin([0, -1]) & ~converted.between(*VALUE_BOUNDS["ship_type"])
+                    converted = converted.mask(converted.eq(0), -1)
                 else:
                     bad_integer |= converted.notna() & ~converted.between(0, 999999999)
                 invalid |= bad_integer
@@ -246,6 +264,56 @@ def normalize_frame(frame: pd.DataFrame, mapping: dict[str, str], source_timezon
         normalized[field] = converted
         issues[field] = int(invalid.sum())
     return normalized, issues
+
+
+def check_field_values(frame, normalized, mapping):
+    """Describe the problems on mapped fields before optional values are replaced."""
+    usable = pd.Series(True, index=frame.index)
+    counts = {}
+    raw_issues = {}
+    for field, column in mapping.items():
+        raw = frame[column]
+        values = normalized[field]
+        missing = _missing(raw)
+        if field == "timestamp":
+            valid = values.gt(0)
+        elif field == "heading":
+            valid = values.ge(0) & values.lt(360)
+        else:
+            valid = values.between(*VALUE_BOUNDS[field])
+        if field == "ship_type":
+            missing |= pd.to_numeric(raw, errors="coerce").isin([-1, 0])
+        if field in REQUIRED_FIELDS:
+            usable &= valid
+        counts[field] = (int(missing.sum()), int((~valid & ~missing).sum()))
+        raw_issues[field] = raw.loc[~valid & ~missing]
+    return usable, counts, raw_issues
+
+
+def quality_warnings(quality):
+    warnings = []
+    for sheet, fields in quality.items():
+        for field in STANDARD_FIELDS:
+            stats = fields[field]
+            if not stats["missing"] and not stats["invalid"]:
+                continue
+            label = FIELD_LABELS[field]
+            if field == "ship_type":
+                impact = "不可用记录按 -1（未知船型）加载。"
+                if stats["missing"] + stats["invalid"] == stats["total"]:
+                    impact += "此工作表无法按具体船型筛选。"
+            elif field in REQUIRED_FIELDS or field in {"length", "width"}:
+                impact = ("问题记录在清洗前不参与分析，可在清洗时复核。" if field in REQUIRED_FIELDS
+                          else "可能影响尺寸分析，可在清洗时复核。")
+            else:
+                impact = "依赖该字段的分析结果可能不完整。"
+            column = f"原列 {stats['column']}" if stats["column"] else "未找到对应列"
+            warnings.append(
+                f"{sheet} · {label}（{column}）：缺失 {stats['missing']:,}，"
+                f"异常 {stats['invalid']:,}，共 {stats['total']:,} 条，"
+                f"不可用占比 {(stats['missing'] + stats['invalid']) / stats['total']:.1%}。{impact}"
+            )
+    return warnings
 
 
 def inspect_tabular(path: Path, source_timezone: str = "Asia/Shanghai", csv_encoding: str = "auto", sheet_name: str | None = None) -> dict[str, Any]:
@@ -285,11 +353,17 @@ def build_tabular_parquet(path: Path, output_path: Path, manifest_path: Path, da
         pa.field("course", pa.float64()), pa.field("speed", pa.float64()),
         pa.field("ship_type", pa.int16()), pa.field("length", pa.float64()), pa.field("width", pa.float64()),
         pa.field("draught", pa.float64()), pa.field("heading", pa.float64()), pa.field("trajectory_id", pa.int32()),
+        pa.field("source_point_id", pa.int64()), pa.field("source_sheet", pa.string()),
+        pa.field("source_record", pa.int64()), pa.field("source_invalid_values", pa.string()),
+        pa.field("source_usable", pa.bool_()),
     ])
     writer = None
     vessels: dict[int, int] = {}
     mappings = {}
     invalid = Counter()
+    quality = {}
+    usable_rows = 0
+    ship_type_available = False
     row_count = 0
     try:
         for sheet, columns, frame, options in source_chunks(path, csv_encoding, sheet_name):
@@ -297,6 +371,30 @@ def build_tabular_parquet(path: Path, output_path: Path, manifest_path: Path, da
             mappings[sheet] = {"mapping": mapping, "columns": columns, **options}
             normalized, issues = normalize_frame(frame, mapping, source_timezone)
             invalid.update(issues)
+            usable, field_counts, raw_issues = check_field_values(frame, normalized, mapping)
+            usable_rows += int(usable.sum())
+            ship_type_available |= bool((usable & normalized["ship_type"].between(*VALUE_BOUNDS["ship_type"])).any())
+            normalized["source_usable"] = usable
+            sheet_quality = quality.setdefault(sheet, {
+                field: {"column": mapping.get(field), "missing": 0, "invalid": 0, "total": 0}
+                for field in STANDARD_FIELDS
+            })
+            for field, stats in sheet_quality.items():
+                missing_count, invalid_count = field_counts.get(field, (len(frame), 0))
+                stats["missing"] += missing_count
+                stats["invalid"] += invalid_count
+                stats["total"] += len(frame)
+            invalid_cells = {}
+            for field, cells in raw_issues.items():
+                for record_number, value in cells.items():
+                    invalid_cells.setdefault(record_number, {})[mapping[field]] = str(value)
+            normalized["source_point_id"] = range(row_count + 1, row_count + len(frame) + 1)
+            normalized["source_sheet"] = sheet
+            normalized["source_record"] = frame.index
+            normalized["source_invalid_values"] = [
+                json.dumps(invalid_cells[index], ensure_ascii=False) if index in invalid_cells else None
+                for index in frame.index
+            ]
             normalized["trajectory_id"] = [vessels.setdefault(int(value), len(vessels)) for value in normalized["mmsi"]]
             table = pa.Table.from_pandas(normalized[schema.names], schema=schema, preserve_index=False)
             if writer is None:
@@ -318,6 +416,8 @@ def build_tabular_parquet(path: Path, output_path: Path, manifest_path: Path, da
             "dataset_id": dataset_id, "dataset_name": dataset_name, "data_role": "source",
             "source": str(path), "parquet": str(output_path), "source_format": path.suffix.lower().lstrip("."),
             "source_timezone": source_timezone, "field_mappings": mappings, "conversion_invalid_values": dict(invalid),
+            "field_quality": quality, "usable_rows": usable_rows, "load_warnings": quality_warnings(quality),
+            "ship_type_available": ship_type_available,
             "columns": schema.names, "row_count": row_count, "trajectory_count": len(vessels), "vessel_count": len(vessels),
             "created_at": datetime.now(timezone.utc).isoformat(), "elapsed_seconds": round(time.perf_counter() - started, 2),
             "bounds": dict(zip(("lon_min", "lon_max", "lat_min", "lat_max"), ranges[:4])),

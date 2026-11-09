@@ -41,10 +41,14 @@ def connect() -> duckdb.DuckDBPyConnection:
 
 
 def points_sql(path: Path | None = None) -> str:
-    if path is None:
+    active = path is None
+    if active:
         path = active_parquet_path()
     escaped = str(path).replace("\\", "/").replace("'", "''")
-    return f"read_parquet('{escaped}')"
+    source = f"read_parquet('{escaped}')"
+    if active and "source_usable" in (read_active_manifest() or {}).get("columns", []):
+        return f"(SELECT * FROM {source} WHERE source_usable) AS usable_points"
+    return source
 
 
 def trajectory_column() -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import threading
 import uuid
@@ -32,6 +33,7 @@ from backend.app.services.cleaning import (
     CleaningConfig,
     default_cleaning_config,
     read_cleaning_manifest,
+    rejected_parquet_path,
     reset_cleaning_result,
     run_cleaning,
 )
@@ -52,7 +54,8 @@ from backend.app.services.dataset import (
     source_dataset_ready,
     unregister_dataset,
 )
-from backend.app.services.exporter import export_excel, export_points_excel
+from backend.app.services.exporter import export_excel, export_points_excel, export_rejected_csv
+from backend.app.services.ingestion import SOURCE_COLUMNS, TABULAR_SUFFIXES
 from backend.app.services.directions import direction_histograms, direction_time_series, validate_direction_bin_width
 from backend.app.services.density import density_features
 from backend.app.services.plots import density_png
@@ -123,6 +126,11 @@ class DatasetRegisterRequest(BaseModel):
     source_timezone: str = "Asia/Shanghai"
     csv_encoding: str = "auto"
     sheet_name: str | None = None
+
+
+class BuildDecision(BaseModel):
+    attempt_id: str
+    proceed: bool
 
 
 def parse_filters(
@@ -323,6 +331,11 @@ def api_unregister_dataset(dataset_id: str) -> dict[str, object]:
         if _build_job["status"] == "running" or _clean_job["status"] == "running":
             raise HTTPException(status_code=409, detail="任务运行中，完成后再移除数据源。")
         try:
+            job = _build_job.snapshot()
+            if job.get("status") == "awaiting_confirmation" and job.get("dataset_id") == dataset_id:
+                for path in _build_staging_paths(dataset_id):
+                    path.unlink(missing_ok=True)
+                _build_job.update(status="idle", warnings=[], attempt_id=None)
             new_active_id = unregister_dataset(dataset_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -354,13 +367,21 @@ def build(force: bool = False) -> dict[str, object]:
         dataset_id = active_dataset_id()
         if not dataset_id:
             raise HTTPException(409, "请先选择历史数据或新增文件。")
+        job = _build_job.snapshot()
+        if job["status"] == "awaiting_confirmation":
+            if job.get("dataset_id") != dataset_id:
+                raise HTTPException(409, "请先处理另一个待确认的数据集。")
+            return {"accepted": False, "job": job}
         if source_dataset_ready() and not force:
             return {"accepted": False, "job": _build_job.snapshot(), "manifest": read_manifest()}
 
         _build_job.update(
             {
                 "status": "running",
-                "message": "Building Parquet dataset",
+                "message": "正在检查字段并转换数据",
+                "attempt_id": uuid.uuid4().hex,
+                "warnings": [],
+                "progress": {},
                 "started_at": datetime.now().isoformat(timespec="seconds"),
                 "finished_at": None,
                 "progress": {},
@@ -369,6 +390,35 @@ def build(force: bool = False) -> dict[str, object]:
         )
         _start_job(_run_build, (force, dataset_id), _build_job)
         return {"accepted": True, "job": _build_job.snapshot()}
+
+
+@app.post("/api/build/decision")
+def decide_build(payload: BuildDecision) -> dict[str, object]:
+    with _build_lock, _clean_lock:
+        job = _build_job.snapshot()
+        dataset_id = active_dataset_id()
+        if (
+            job["status"] != "awaiting_confirmation"
+            or job.get("dataset_id") != dataset_id
+            or job.get("attempt_id") != payload.attempt_id
+        ):
+            raise HTTPException(409, "这次加载已结束或数据集已切换，请刷新状态。")
+        staged = _build_staging_paths(dataset_id)
+        try:
+            if payload.proceed:
+                manifest = json.loads(staged[1].read_text(encoding="utf-8"))
+                _publish_tabular_build(dataset_id, staged, manifest)
+                _finish_build(manifest)
+            else:
+                _build_job.update(status="idle", message="已取消加载，可重新检查源文件。",
+                                  progress={}, warnings=[], attempt_id=None)
+        except Exception as exc:
+            _build_job.update(status="error", message=str(exc), warnings=[], attempt_id=None)
+            raise HTTPException(500, "加载确认失败，请重新加载数据。") from exc
+        finally:
+            for path in staged:
+                path.unlink(missing_ok=True)
+        return {"job": _build_job.snapshot()}
 
 
 @app.get("/api/cleaning/defaults")
@@ -560,6 +610,21 @@ def api_export_cleaned() -> FileResponse:
     return _export_points(kind="cleaned")
 
 
+@app.get("/api/export/rejected")
+def api_export_rejected() -> FileResponse:
+    with _build_lock, _clean_lock:
+        if _build_job["status"] == "running" or _clean_job["status"] == "running":
+            raise HTTPException(409, "请等数据加载或清洗完成后再导出。")
+        if not active_dataset_id():
+            raise HTTPException(409, "请先选择数据集。")
+        manifest = read_cleaning_manifest() or {}
+        source = rejected_parquet_path()
+        if not manifest.get("rejected_records_available") or not source.is_file():
+            raise HTTPException(409, "请先重新清洗当前数据集以生成剔除记录。")
+        path = _call(export_rejected_csv, source)
+    return FileResponse(path, filename=path.name, media_type="text/csv")
+
+
 @app.get("/api/export/filtered")
 def api_export_filtered(filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
     return _export_points(kind="filtered", filters=filters)
@@ -588,7 +653,10 @@ def _export_points(*, kind: str, filters: QueryFilters | None = None) -> FileRes
                     raise HTTPException(409, "请先选择并加载数据。")
                 query_source = trajectory_source if kind == "section_tracks" else analysis_source
                 source, params = query_source(filters)
-            _call(con.execute, f"SELECT * FROM {source} ORDER BY mmsi, timestamp, trajectory_id, lon, lat", params)
+            fields = {column[0] for column in _call(con.execute, f"DESCRIBE SELECT * FROM {source}", params).fetchall()}
+            internal = [column for column in SOURCE_COLUMNS if column in fields]
+            projection = f"* EXCLUDE ({', '.join(internal)})" if internal else "*"
+            _call(con.execute, f"SELECT {projection} FROM {source} ORDER BY mmsi, timestamp, trajectory_id, lon, lat", params)
         path = _call(export_points_excel, con, kind=kind)
     return FileResponse(
         path, filename=path.name,
@@ -596,30 +664,63 @@ def _export_points(*, kind: str, filters: QueryFilters | None = None) -> FileRes
     )
 
 
+def _build_staging_paths(dataset_id: str) -> tuple[Path, Path]:
+    paths = dataset_paths(dataset_id)
+    return paths.source_parquet.with_suffix(".pending.parquet"), paths.source_manifest.with_suffix(".pending.json")
+
+
+def _publish_tabular_build(dataset_id: str, staged: tuple[Path, Path], manifest: dict) -> None:
+    paths = dataset_paths(dataset_id)
+    manifest["parquet"] = str(paths.source_parquet)
+    staged[1].write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    staged[0].replace(paths.source_parquet)
+    reset_cleaning_result(dataset_id)
+    staged[1].replace(paths.source_manifest)
+
+
+def _finish_build(manifest: dict) -> None:
+    clear_track_tile_cache()
+    _build_job.update(
+        status="done", message="数据加载完成", finished_at=datetime.now().isoformat(timespec="seconds"),
+        progress={"row_count": manifest.get("row_count"), "elapsed_seconds": manifest.get("elapsed_seconds")},
+        warnings=[], attempt_id=None,
+    )
+
+
 def _run_build(force: bool, dataset_id: str) -> None:
     def progress(state: dict[str, object]) -> None:
         _build_job["progress"] = state
 
+    staged = ()
     try:
-        manifest = build_parquet(dataset_id=dataset_id, force=force, progress=progress)
-        reset_cleaning_result(dataset_id)
-        clear_track_tile_cache()
-        _build_job.update(
-            {
-                "status": "done",
-                "message": "Dataset is ready",
-                "finished_at": datetime.now().isoformat(timespec="seconds"),
-                "progress": {"row_count": manifest.get("row_count"), "elapsed_seconds": manifest.get("elapsed_seconds")},
-            }
+        if dataset_paths(dataset_id).source_path.suffix.lower() not in TABULAR_SUFFIXES:
+            manifest = build_parquet(dataset_id=dataset_id, force=force, progress=progress)
+            reset_cleaning_result(dataset_id)
+            _finish_build(manifest)
+            return
+
+        staged = _build_staging_paths(dataset_id)
+        manifest = build_parquet(
+            dataset_id=dataset_id, output_path=staged[0], manifest_path=staged[1],
+            force=True, progress=progress,
         )
+        warnings = manifest["load_warnings"]
+        if not manifest["usable_rows"]:
+            details = "；".join(warnings[:8])
+            raise ValueError(f"没有包含完整有效必需字段的轨迹点，请检查源文件。{details}")
+        if warnings:
+            _build_job.update(status="awaiting_confirmation", message="发现字段问题，等待确认",
+                              warnings=warnings, progress={"processed_rows": manifest["row_count"]})
+            staged = ()
+            return
+        _publish_tabular_build(dataset_id, staged, manifest)
+        _finish_build(manifest)
     except Exception as exc:
-        _build_job.update(
-            {
-                "status": "error",
-                "message": str(exc),
-                "finished_at": datetime.now().isoformat(timespec="seconds"),
-            }
-        )
+        _build_job.update(status="error", message=str(exc), warnings=[], attempt_id=None,
+                          finished_at=datetime.now().isoformat(timespec="seconds"))
+    finally:
+        for path in staged:
+            path.unlink(missing_ok=True)
 
 
 def _run_cleaning(config: CleaningConfig, dataset_id: str) -> None:

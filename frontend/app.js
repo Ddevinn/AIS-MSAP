@@ -182,6 +182,16 @@ window.addEventListener("DOMContentLoaded", async () => {
     const params = new URLSearchParams({ dataset_id: state.activeDatasetId });
     window.location.href = `/api/export/cleaned?${params}`;
   });
+  $("exportRejectedBtn").addEventListener("click", () => {
+    const params = new URLSearchParams({ dataset_id: state.activeDatasetId });
+    window.location.href = `/api/export/rejected?${params}`;
+  });
+  $("confirmBuildQualityBtn").addEventListener("click", () => decideBuildQuality(true));
+  $("cancelBuildQualityBtn").addEventListener("click", () => decideBuildQuality(false));
+  $("buildQualityDialog").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    if (!$("cancelBuildQualityBtn").disabled) decideBuildQuality(false);
+  });
   $("exportFilteredBtn").addEventListener("click", () => {
     window.location.href = `/api/export/filtered${queryString()}`;
   });
@@ -364,8 +374,14 @@ async function uploadDataset() {
     state.filters = {};
     await pollStatus();
     $("jobText").textContent = "文件已添加，点击“加载数据”转换为可分析格式";
-  } catch (error) { $("jobText").textContent = error.message; }
-  finally { button.disabled = false; $("datasetFileInput").value = ""; }
+  } catch (error) {
+    const panel = $("importMappingPanel");
+    panel.textContent = error.message;
+    panel.hidden = false;
+  } finally {
+    button.disabled = false;
+    $("datasetFileInput").value = "";
+  }
 }
 
 async function pollStatus() {
@@ -382,6 +398,19 @@ async function pollStatus() {
     const processing = data.build_job?.status === "running" || data.clean_job?.status === "running";
     $("buildBtn").disabled = !selectedDataset || processing;
     $("exportCleanedBtn").disabled = processing || !data.cleaned_dataset_ready;
+    const rejectedAvailable = Boolean(data.cleaning_manifest?.rejected_records_available);
+    $("exportRejectedBtn").disabled = processing || !rejectedAvailable;
+    $("rejectedExportHint").hidden = !data.cleaned_dataset_ready || rejectedAvailable;
+    $("rejectedExportHint").textContent = "此清洗批次未记录剔除明细，重新清洗后可导出。";
+    const shipTypeUnavailable = data.manifest?.ship_type_available === false;
+    const shipTypeInput = $("shipTypeInput");
+    shipTypeInput.disabled = shipTypeUnavailable;
+    shipTypeInput.options[0].textContent = shipTypeUnavailable ? "无可用船型" : "全部船型";
+    if (shipTypeUnavailable) {
+      shipTypeInput.value = "";
+      delete state.filters.ship_type_min;
+      delete state.filters.ship_type_max;
+    }
     $("exportFilteredBtn").disabled = processing || !data.dataset_ready;
     updateSpatialExportButton();
     ["runCleanBtn", "resetCleanBtn", "reportExcelBtn", "refreshBtn", "reportRefreshBtn", "applyBtn", "clearBtn",
@@ -390,6 +419,7 @@ async function pollStatus() {
     const job = !data.build_job?.dataset_id || data.build_job.dataset_id === data.active_dataset_id
       ? data.build_job || {} : {};
     $("jobText").textContent = formatJob(job, job.progress || {});
+    showBuildQuality(job);
 
     const cleanJob = !data.clean_job?.dataset_id || data.clean_job.dataset_id === data.active_dataset_id
       ? data.clean_job || {} : {};
@@ -445,7 +475,8 @@ function formatJob(job, progress) {
     return `正在加载：${rows} 条位置记录 ${traj}`;
   }
   if (job.status === "done") return "数据加载完成";
-  if (job.status === "error") return "数据加载失败，请检查文件";
+  if (job.status === "awaiting_confirmation") return "发现字段问题，等待确认";
+  if (job.status === "error") return job.message || "数据加载失败，请检查文件";
   return "待命";
 }
 
@@ -482,6 +513,43 @@ function updateCleanProgress(job, progress, manifest) {
   fill.style.background = job.status === "error" ? "var(--red)" : "var(--blue)";
   value.textContent = `${formatNumber(percent, percent % 1 ? 1 : 0)}%`;
   stage.textContent = text;
+}
+
+function showBuildQuality(job) {
+  const dialog = $("buildQualityDialog");
+  if (job.status !== "awaiting_confirmation") {
+    if (dialog.open) dialog.close();
+    return;
+  }
+  if (dialog.open && dialog.dataset.attemptId === job.attempt_id) return;
+
+  dialog.dataset.attemptId = job.attempt_id;
+  $("buildQualityError").hidden = true;
+  $("buildQualityWarnings").replaceChildren(...job.warnings.map((warning) => {
+    const item = document.createElement("li");
+    item.textContent = warning;
+    return item;
+  }));
+  if (!dialog.open) dialog.showModal();
+}
+
+async function decideBuildQuality(proceed) {
+  const dialog = $("buildQualityDialog");
+  const confirm = $("confirmBuildQualityBtn");
+  const cancel = $("cancelBuildQualityBtn");
+  const error = $("buildQualityError");
+  confirm.disabled = cancel.disabled = true;
+  error.hidden = true;
+  try {
+    await postJson("/api/build/decision", { attempt_id: dialog.dataset.attemptId, proceed });
+    dialog.close();
+    await pollStatus();
+  } catch (failure) {
+    error.textContent = failure.message;
+    error.hidden = false;
+  } finally {
+    confirm.disabled = cancel.disabled = false;
+  }
 }
 
 async function startBuild() {
