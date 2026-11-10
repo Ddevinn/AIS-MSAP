@@ -165,10 +165,45 @@ class AccountPlatformTests(unittest.TestCase):
         self.assertFalse(failed["dataset_ready"])
 
 
+    def test_behavior_export_downloads_matching_pairs_with_current_filters(self):
+        from openpyxl import load_workbook
+
+        client = self.admin
+        path = "/api/export/behavior"
+        self.assertEqual(client.get(path).status_code, 422)
+        self.assertEqual(client.get(path, params={"behavior": "invalid"}).status_code, 422)
+        contents = (
+            "mmsi,updatetime,lon,lat,speed,course,heading,type,length,width,draught\n"
+            "413523230,2024-01-01 12:00:00,110,20,5,350,350,70,100,20,4\n"
+            "413523230,2024-01-01 12:01:00,110.001,20,5,10,10,70,100,20,4\n"
+            "413523230,2024-01-01 12:02:00,110.002,20,5,10,10,70,100,20,4\n"
+            "413523231,2024-01-01 12:00:00,110,20,5,90,90,70,100,20,4\n"
+            "413523231,2024-01-01 12:01:00,110.001,20,5,120,120,70,100,20,4\n"
+        )
+        uploaded = client.post("/api/datasets/upload", files={"file": ("behaviors.csv", contents.encode(), "text/csv")})
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        self.build(client)
+        for cleaned in (False, True):
+            with self.subTest(cleaned=cleaned):
+                if cleaned:
+                    self.assertEqual(client.post("/api/cleaning/run").status_code, 200)
+                    state = self.wait_for_job(client, "clean_job")
+                    self.assertEqual(state["clean_job"]["status"], "done", state)
+                response = client.get(path, params={"behavior": "turning", "mmsi": 413523230})
+                self.assertEqual(response.status_code, 200, response.text if not response.is_success else "")
+                workbook = load_workbook(io.BytesIO(response.content), read_only=True)
+                try:
+                    self.assertEqual(workbook.sheetnames, ["船舶行为轨迹"])
+                    headers, *rows = workbook.active.values
+                    self.assertEqual([row[headers.index("mmsi")] for row in rows], [413523230, 413523230])
+                    self.assertEqual([row[headers.index("course")] for row in rows], [350, 10])
+                finally:
+                    workbook.close()
+
     def test_pages_and_every_data_entry_require_login(self):
         anonymous = self.client()
         for path in ("/api/status", "/api/datasets", "/api/summary", "/api/density-grid",
-                     "/api/tiles/tracks/8/206/113.png", "/api/export/excel", "/api/admin/users", "/api/cleaning/status"):
+                     "/api/tiles/tracks/8/206/113.png", "/api/export/excel", "/api/export/behavior", "/api/admin/users", "/api/cleaning/status"):
             self.assertEqual(anonymous.get(path).status_code, 401, path)
         for path in ("/", "/admin", "/static/index.html", "/static/admin.html", "/static//admin.html", "/static/ADMIN.HTML"):
             response = anonymous.get(path, follow_redirects=False)

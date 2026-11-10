@@ -224,8 +224,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("toggleFilterPanelBtn").addEventListener("click", () => toggleMapTool("filter"));
   $("toggleMeasurePanelBtn").addEventListener("click", () => toggleMapTool("measure"));
   $("toggleBehaviorPanelBtn").addEventListener("click", () => toggleMapTool("behavior"));
+  $("behaviorSelect").addEventListener("change", updateBehaviorExportButton);
   $("applyBehaviorBtn").addEventListener("click", applyBehaviorFilter);
   $("clearBehaviorBtn").addEventListener("click", clearBehaviorFilter);
+  $("exportBehaviorBtn").addEventListener("click", () => {
+    window.location.href = `/api/export/behavior${queryString({ behavior: state.behaviorFilter })}`;
+  });
   $("undoMeasureBtn").addEventListener("click", undoMeasurePoint);
   $("clearMeasureBtn").addEventListener("click", clearMeasurement);
   $("beginMarkerBtn").addEventListener("click", beginMarkerDrawing);
@@ -413,6 +417,7 @@ async function pollStatus() {
     }
     $("exportFilteredBtn").disabled = processing || !data.dataset_ready;
     updateSpatialExportButton();
+    updateBehaviorExportButton();
     ["runCleanBtn", "resetCleanBtn", "reportExcelBtn", "refreshBtn", "reportRefreshBtn", "applyBtn", "clearBtn",
       "applyDirectionMmsiBtn", "fitMapBtn", "reloadTracksBtn", "grainSelect", "speedBinWidthSelect", "lengthBinWidthSelect",
       "directionBinWidthSelect", "headingBinWidthSelect"].forEach(id => { $(id).disabled = !data.dataset_ready; });
@@ -1029,6 +1034,7 @@ function applyBehaviorFilter() {
   }
   state.behaviorFilter = select.value;
   $("behaviorFilterStatus").textContent = `正在显示：${select.options[select.selectedIndex].text}`;
+  updateBehaviorExportButton();
   refreshTrackTiles();
 }
 
@@ -1036,7 +1042,13 @@ function clearBehaviorFilter() {
   state.behaviorFilter = null;
   $("behaviorSelect").value = "";
   $("behaviorFilterStatus").textContent = "显示全部轨迹";
+  updateBehaviorExportButton();
   refreshTrackTiles();
+}
+
+function updateBehaviorExportButton() {
+  const applied = state.behaviorFilter && state.behaviorFilter === $("behaviorSelect").value;
+  $("exportBehaviorBtn").disabled = !applied || $("exportFilteredBtn").disabled;
 }
 
 function renderQualityPanel(counts) {
@@ -2087,6 +2099,7 @@ function resetFilters() {
   $("spatialTrafficStats").textContent = "选择截面或区域标记后显示交通流统计";
   $("behaviorSelect").value = "";
   $("behaviorFilterStatus").textContent = "显示全部轨迹";
+  updateBehaviorExportButton();
   state.filters = {};
   updateSpatialExportButton();
   renderMarkers();
