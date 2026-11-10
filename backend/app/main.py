@@ -69,7 +69,7 @@ from backend.app.services.query import (
     trajectory_source,
 )
 from backend.app.services.track_inspection import (
-    TrackAnchor, selected_track_details, selected_track_source, viewport_track_points,
+    TrackAnchor, selected_track_annotations, selected_track_details, selected_track_source, viewport_track_points,
 )
 from backend.app.services.raster_tracks import (
     cached_track_tile_png,
@@ -610,6 +610,23 @@ def api_track_inspection_segment(
     if detail is None:
         raise HTTPException(404, "找不到所选轨迹，请重新点选。")
     return detail
+
+
+@app.get("/api/track-inspection/annotations")
+def api_track_inspection_annotations(
+    anchor: TrackAnchor = Depends(),
+    west: float | None = Query(default=None, ge=-180, le=180),
+    south: float | None = Query(default=None, ge=-90, le=90),
+    east: float | None = Query(default=None, ge=-180, le=180),
+    north: float | None = Query(default=None, ge=-90, le=90),
+    filters: QueryFilters = Depends(parse_filters),
+) -> dict:
+    bounds = None
+    if any(value is not None for value in (west, south, east, north)):
+        if west is None or south is None or east is None or north is None or west >= east or south >= north:
+            raise HTTPException(422, "地图视窗范围无效。")
+        bounds = west, south, east, north
+    return _call(selected_track_annotations, filters, anchor, bounds)
 
 
 @app.get("/api/track/{mmsi}")

@@ -275,6 +275,47 @@ class AccountPlatformTests(unittest.TestCase):
                     filtered = {**params, "anchor_time": first["timestamp"], "anchor_lon": 110, "speed_min": 1}
                     self.assertEqual(client.get(detail_url, params=filtered).json()["point_count"], 1)
 
+    def test_selected_track_annotations_preserve_true_endpoints_and_pairwise_marks(self):
+        from backend.app.services import track_inspection
+
+        client = self.admin
+        column_names = "mmsi,updatetime,lon,lat,speed,course,heading,type,length,width,draught"
+        times = ["12:00:00", "12:01:00", "12:02:00", "12:03:00", "12:04:00", "12:14:01", "15:00:00"]
+        speeds = [3, 5, 1.5, 0.4, 0.3, 8, 8]
+        records = [f"413523230,2024-01-01 {time},{110 + index / 1000:.3f},20,{speed},90,90,70,100,20,4"
+                   for index, (time, speed) in enumerate(zip(times, speeds))]
+        contents = chr(10).join([column_names, *records]).encode()
+        upload = client.post("/api/datasets/upload", files={"file": ("labels.csv", contents, "text/csv")})
+        self.assertEqual(upload.status_code, 200, upload.text)
+        dataset_id = upload.json()["dataset"]["id"]
+        self.build(client)
+        manifest = client.get("/api/status").json()["active_manifest"]
+        version = ":".join(map(str, (dataset_id, manifest["data_role"], manifest["created_at"], manifest["row_count"])))
+        params = {"vessel_id": 413523230, "track_id": 0, "anchor_time": manifest["time_range"]["timestamp_min"],
+                  "anchor_lon": 110, "anchor_lat": 20, "data_version": version}
+        url = "/api/track-inspection/annotations"
+        response = client.get(url, params=params)
+        self.assertEqual(response.status_code, 200, response.text)
+        points = response.json()["points"]
+        self.assertEqual([point["endpoint"] for point in points], ["start", None, None, None, None, "end"])
+        self.assertEqual([point["activity"] for point in points], [None, "accelerate", "decelerate", "decelerate", "stop", None])
+        self.assertEqual(points[1]["previous"], [110, 20])
+        self.assertEqual(points[1]["timestamp"] - points[0]["timestamp"], 60)
+        bounds = {"west": 110.0025, "east": 110.0045, "south": 19.99, "north": 20.01}
+        clipped = client.get(url, params={**params, **bounds})
+        self.assertEqual(clipped.status_code, 200, clipped.text)
+        visible = clipped.json()["points"]
+        self.assertEqual([point["index"] for point in visible], [4, 5, 6])
+        self.assertEqual(visible[0]["previous"], [110.002, 20])
+        self.assertEqual(visible[0]["activity"], "decelerate")
+        self.assertIsNone(visible[0]["endpoint"])
+        self.assertEqual(visible[-1]["endpoint"], "end")
+        self.assertEqual(client.get(url, params={**params, "west": 110}).status_code, 422)
+        with patch.object(track_inspection, "MAX_ANNOTATION_POINTS", 2):
+            self.assertTrue(client.get(url, params=params).json()["limited"])
+            detail = client.get("/api/track-inspection/segment", params=params).json()
+            self.assertTrue(detail["annotation_viewport"])
+
     def test_pages_and_every_data_entry_require_login(self):
         anonymous = self.client()
         for path in ("/api/status", "/api/datasets", "/api/summary", "/api/density-grid",

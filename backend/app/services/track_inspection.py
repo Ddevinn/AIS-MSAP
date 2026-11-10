@@ -10,7 +10,7 @@ from backend.app.services.raster_tracks import TRACK_POINT_ORDER, track_gap_limi
 
 
 MAX_VIEW_POINTS = 4_000
-MAX_HIGHLIGHT_POINTS = 2_000
+MAX_ANNOTATION_POINTS = 2_500
 
 
 @dataclass(frozen=True)
@@ -157,7 +157,8 @@ def selected_track_details(filters: QueryFilters, anchor: TrackAnchor) -> dict |
                    first(length::DOUBLE ORDER BY timestamp DESC) FILTER (WHERE isfinite(length) AND length >= 0),
                    first(width::DOUBLE ORDER BY timestamp DESC) FILTER (WHERE isfinite(width) AND width >= 0),
                    list([lon::DOUBLE, lat::DOUBLE] ORDER BY row_id) FILTER (
-                       WHERE row_id = total OR (row_id - 1) % ceil(total / {MAX_HIGHLIGHT_POINTS - 1}.0)::BIGINT = 0
+                       WHERE total <= {MAX_ANNOTATION_POINTS} OR row_id = total
+                          OR (row_id - 1) % ceil(total / {MAX_ANNOTATION_POINTS - 1}.0)::BIGINT = 0
                    )
             FROM numbered
         """, params).fetchone()
@@ -166,4 +167,64 @@ def selected_track_details(filters: QueryFilters, anchor: TrackAnchor) -> dict |
     return {
         "mmsi": anchor.vessel_id, "point_count": count, "speed_avg": _value(speed),
         "length": length, "width": width, "path": path,
+        "annotation_viewport": count > MAX_ANNOTATION_POINTS,
+    }
+
+
+def selected_track_annotations(
+    filters: QueryFilters, anchor: TrackAnchor, bounds: tuple[float, float, float, float] | None,
+) -> dict:
+    source, params = selected_track_source(filters, anchor)
+    # Compute tags and endpoints for the whole selected segment before clipping to the viewport.
+    view = ""
+    where = ""
+    if bounds is not None:
+        view = "CROSS JOIN (SELECT ? AS west, ? AS south, ? AS east, ? AS north) AS view"
+        where = """
+            WHERE (lon BETWEEN west AND east AND lat BETWEEN south AND north)
+               OR (prev_lon IS NOT NULL AND least(lon, prev_lon) <= east AND greatest(lon, prev_lon) >= west
+                                       AND least(lat, prev_lat) <= north AND greatest(lat, prev_lat) >= south)
+        """
+        params = [*params, *bounds]
+    with connect() as con:
+        rows = con.execute(f"""
+            WITH ordered AS (
+                SELECT lon::DOUBLE AS lon, lat::DOUBLE AS lat, timestamp, speed::DOUBLE AS speed,
+                       row_number() OVER segment_order AS point_index, count(*) OVER () AS total,
+                       lag(timestamp) OVER segment_order AS prev_time,
+                       lag(speed::DOUBLE) OVER segment_order AS prev_speed,
+                       lag(lon::DOUBLE) OVER segment_order AS prev_lon,
+                       lag(lat::DOUBLE) OVER segment_order AS prev_lat
+                FROM {source}
+                WINDOW segment_order AS (ORDER BY {TRACK_POINT_ORDER})
+            ), changes AS (
+                SELECT *, timestamp - prev_time AS elapsed, speed - prev_speed AS speed_change
+                FROM ordered
+            )
+            SELECT point_index, lon, lat, timestamp, prev_lon, prev_lat,
+                   CASE WHEN total = 1 THEN 'both'
+                        WHEN point_index = 1 THEN 'start' WHEN point_index = total THEN 'end' END,
+                   CASE
+                       WHEN elapsed NOT BETWEEN 1 AND 600
+                         OR NOT coalesce(isfinite(speed) AND speed >= 0 AND isfinite(prev_speed) AND prev_speed >= 0, false)
+                         THEN NULL
+                       WHEN speed <= 0.5 AND prev_speed <= 0.5 THEN 'stop'
+                       WHEN speed_change >= 1 AND speed_change * 60 >= elapsed * 0.5 THEN 'accelerate'
+                       WHEN speed_change <= -1 AND -speed_change * 60 >= elapsed * 0.5 THEN 'decelerate'
+                   END
+            FROM changes {view} {where}
+            ORDER BY point_index
+            LIMIT {MAX_ANNOTATION_POINTS + 1}
+        """, params).fetchall()
+    return {
+        "points": [
+            {
+                "index": index, "lon": lon, "lat": lat, "timestamp": timestamp,
+                "previous": [prev_lon, prev_lat] if prev_lon is not None else None,
+                "endpoint": endpoint, "activity": activity,
+            }
+            for index, lon, lat, timestamp, prev_lon, prev_lat, endpoint, activity
+            in rows[:MAX_ANNOTATION_POINTS]
+        ],
+        "limited": len(rows) > MAX_ANNOTATION_POINTS,
     }

@@ -25,7 +25,10 @@ function initTrackInspection() {
   map.addSource("ais-picked-track", { type: "geojson", data: trackFeatures() });
   map.addLayer({
     id: "ais-inspect-dots", type: "circle", source: "ais-inspect-points", minzoom: 13,
-    paint: { "circle-radius": 2, "circle-color": "#d7f8fb", "circle-stroke-width": 0.7, "circle-stroke-color": "#075d77" },
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 13, 3.4, 17, 4.6],
+      "circle-color": "#0d657b", "circle-stroke-width": 1.3, "circle-stroke-color": "#fff",
+    },
   }, before);
   map.addLayer({
     id: "ais-picked-outline", type: "line", source: "ais-picked-track",
@@ -57,6 +60,7 @@ function initTrackInspection() {
   });
   map.getCanvas().addEventListener("mouseleave", clearTrackHover);
   map.on("click", inspectTrackSelection);
+  initTrackAnnotations(map);
 }
 
 function canInspectTracks() {
@@ -89,6 +93,7 @@ function clearTrackCandidates() {
 }
 
 function clearTrackSelection() {
+  clearTrackAnnotations();
   trackInspector.selectionRequest?.abort();
   trackInspector.selectionRequest = null;
   const popup = trackInspector.selectedPopup;
@@ -180,7 +185,7 @@ function overTrackMarker(pixel) {
 
 function nearestTrackPoint(pixel) {
   let result = null;
-  let distance = 8 ** 2;
+  let distance = 10 ** 2;
   for (const point of trackInspector.points) {
     const candidate = (pixel.x - point.pixel.x) ** 2 + (pixel.y - point.pixel.y) ** 2;
     if (candidate >= distance) continue;
@@ -211,6 +216,11 @@ function nearestTrackLine(pixel) {
 
 function trackNumber(value, unit = "", digits = 2) {
   return Number.isFinite(value) ? `${formatNumber(value, digits)}${unit}` : "-";
+}
+
+function trackTime(timestamp) {
+  const time = new Date(timestamp * 1000);
+  return timestamp > 0 && Number.isFinite(time.getTime()) ? TRACK_TIME_FORMAT.format(time).replaceAll("/", "-") : "-";
 }
 
 function trackCoordinate(value) {
@@ -257,9 +267,8 @@ function showTrackPoint(point) {
   const dot = document.createElement("span");
   marker.append(dot);
   trackInspector.marker = new maplibregl.Marker({ element: marker }).setLngLat(point.coordinate).addTo(state.map);
-  const time = new Date(point.timestamp * 1000);
   const card = trackCard("AIS 轨迹点", point.mmsi, [
-    ["时间 · 北京", point.timestamp > 0 && Number.isFinite(time.getTime()) ? TRACK_TIME_FORMAT.format(time) : "-"],
+    ["时间 · 北京", trackTime(point.timestamp)],
     ["船长 / 船宽", `${trackNumber(point.length, " m")} / ${trackNumber(point.width, " m")}`],
     ["经度", trackCoordinate(point.lon)],
     ["纬度", trackCoordinate(point.lat)],
@@ -312,6 +321,7 @@ async function inspectTrackSelection(event) {
       closeOnClick: false, focusAfterOpen: false, maxWidth: "300px", offset: 14,
     }).setLngLat(hitPoint ? point.coordinate : event.lngLat).setDOMContent(card).addTo(map);
     trackInspector.selectedPopup = popup;
+    showTrackAnnotations(params, detail.annotation_viewport);
     popup.on("close", () => {
       if (trackInspector.selectedPopup === popup) clearTrackSelection();
     });

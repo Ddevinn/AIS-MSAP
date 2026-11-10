@@ -6,7 +6,7 @@
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261110-track-inspection-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261110-track-annotations-1" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
@@ -227,6 +227,7 @@
                 <button id="mapCoordinates" class="map-coordinates" type="button" title="点击切换为度分秒">经度 —　纬度 —</button>
                 <div id="mapStatus" class="map-status">地图初始化中</div>
                 <div id="trackInspectionHint" class="map-status track-inspection-hint" hidden></div>
+                <div id="trackAnnotationHint" class="map-status track-inspection-hint" hidden></div>
                 <div id="basemapStatus" class="basemap-status" role="status"><span id="basemapStatusText">底图加载中…</span><button id="retryBasemapBtn" type="button">重新加载底图</button></div>
               </div>
 
@@ -409,7 +410,8 @@
     <script src="/static/basemap.js?v=20261014-1"></script>
     <script src="/static/app.js?v=20261110-track-inspection-1"></script>
     <script src="/static/density.js?v=20261109-detail-1"></script>
-    <script src="/static/track-inspection.js?v=20261110-1"></script>
+    <script src="/static/track-inspection.js?v=20261110-annotations-1"></script>
+    <script src="/static/track-annotations.js?v=20261110-1"></script>
     <dialog id="buildQualityDialog" class="quality-dialog" aria-labelledby="buildQualityTitle">
       <h2 id="buildQualityTitle">发现字段质量问题</h2>
       <p>请核对以下字段及对分析的影响。</p>

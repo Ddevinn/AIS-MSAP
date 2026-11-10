@@ -326,8 +326,8 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .track-hover-popup, .track-hover-popup .maplibregl-popup-content, .track-hover-marker { pointer-events: none; }
 .track-hover-marker span {
   display: block;
-  width: 13px;
-  height: 13px;
+  width: 16px;
+  height: 16px;
   border: 2px solid #fff;
   border-radius: 50%;
   background: #087998;
@@ -370,6 +370,44 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .track-inspection-grid dt { color: #526a7d; font-size: 10px; }
 .track-inspection-grid dd { margin: 2px 0 0; font-size: 11px; font-weight: 650; overflow-wrap: anywhere; }
 .track-export-link { text-decoration: none; }
+.track-annotation-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.track-annotation-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.track-annotation-arrow { fill: #173b51; stroke: #fff8e5; stroke-width: 1.2; }
+.track-annotation-leader { fill: none; stroke: #658297; stroke-width: 1; }
+.track-annotation-dot { fill: #fff9e8; stroke: #704a18; stroke-width: 1.35; }
+.track-annotation-dot.is-start { fill: #078357; stroke: #fff; stroke-width: 2; }
+.track-annotation-dot.is-end { fill: #c8374c; stroke: #fff; stroke-width: 2; }
+.track-annotation-dot.is-both { fill: #6258bf; stroke: #fff; stroke-width: 2; }
+.track-annotation-label {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+  white-space: nowrap;
+  font: 11px/1.25 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+.track-annotation-time, .track-annotation-badge {
+  padding: 2px 4px;
+  border: 1px solid #b9cad5;
+  border-radius: 4px;
+  background: #fff;
+  color: #203d54;
+  box-shadow: 0 1px 3px #173b5133;
+}
+.track-annotation-badge { border-color: transparent; color: #fff; }
+.track-annotation-badge.is-start { background: #087952; }
+.track-annotation-badge.is-end { background: #b92f44; }
+.track-annotation-badge.is-both { background: #554caf; }
+.track-annotation-badge.is-accelerate { background: #135ab0; }
+.track-annotation-badge.is-decelerate { background: #9b4918; }
+.track-annotation-badge.is-stop { background: #a72a39; }
 .basemap-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 3px 0; color: var(--muted); font-size: 10px; }
 .basemap-status.has-error { color: #a65125; }
 .basemap-status button { flex-shrink: 0; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #24598a; font: inherit; cursor: pointer; }
