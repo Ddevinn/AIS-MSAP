@@ -6,7 +6,7 @@
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261109-field-quality-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261110-coordinate-hints-1" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
@@ -132,13 +132,14 @@
               </select>
             </label>
             <label class="field">船舶编号<input id="mmsiFilterInput" type="text" inputmode="numeric" placeholder="输入船舶编号" /></label>
-            <details class="compact-details">
+            <details class="compact-details coordinate-range">
               <summary>手动经纬度范围</summary>
               <div class="details-body field-grid two">
-                <label class="field">最小经度<input id="lonMinInput" type="number" step="0.0001" /></label>
-                <label class="field">最大经度<input id="lonMaxInput" type="number" step="0.0001" /></label>
-                <label class="field">最小纬度<input id="latMinInput" type="number" step="0.0001" /></label>
-                <label class="field">最大纬度<input id="latMaxInput" type="number" step="0.0001" /></label>
+                <p id="coordinateFormatHint" class="muted coordinate-format-hint">请输入十进制度。西经、南纬用负数。</p>
+                <label class="field">最小经度<input id="lonMinInput" type="number" step="0.0001" placeholder="例如 113.5000" aria-describedby="coordinateFormatHint" /></label>
+                <label class="field">最大经度<input id="lonMaxInput" type="number" step="0.0001" placeholder="例如 114.5000" aria-describedby="coordinateFormatHint" /></label>
+                <label class="field">最小纬度<input id="latMinInput" type="number" step="0.0001" placeholder="例如 22.2000" aria-describedby="coordinateFormatHint" /></label>
+                <label class="field">最大纬度<input id="latMaxInput" type="number" step="0.0001" placeholder="例如 23.2000" aria-describedby="coordinateFormatHint" /></label>
               </div>
             </details>
             <div class="button-row">
