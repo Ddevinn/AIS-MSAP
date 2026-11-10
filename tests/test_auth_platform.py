@@ -200,6 +200,81 @@ class AccountPlatformTests(unittest.TestCase):
                 finally:
                     workbook.close()
 
+    def test_map_track_inspection_and_export_use_the_same_contiguous_segment(self):
+        from openpyxl import load_workbook
+
+        client = self.admin
+        columns = "mmsi,updatetime,lon,lat,speed,course,heading,type,length,width,draught"
+        rows = [
+            "413523230,2024-01-01 12:00:00,110,20,5,0,0,70,100,20,4",
+            "413523230,2024-01-01 12:01:00,110.003,20,0,1,,70,100,20,4",
+            "413523230,2024-01-01 12:02:00,110.006,20,6,1,25,70,100,20,4",
+            "413523230,2024-01-01 15:00:00,110.020,20,5,90,91,70,100,20,4",
+            "413523230,2024-01-01 15:01:00,110.021,20,5,90,91,70,100,20,4",
+            "413523231,2024-01-01 12:00:00,110,20.010,8,90,91,70,80,15,4",
+        ]
+        contents = chr(10).join([columns, *rows]).encode()
+        uploaded = client.post("/api/datasets/upload", files={"file": ("map.csv", contents, "text/csv")})
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        self.assertEqual(client.post("/api/build").status_code, 200)
+        job = self.wait_for_job(client, "build_job")["build_job"]
+        self.assertEqual(job["status"], "awaiting_confirmation")
+        self.assertEqual(client.post("/api/build/decision", json={"attempt_id": job["attempt_id"], "proceed": True}).status_code, 200)
+        viewport = "/api/track-inspection/viewport"
+        detail_url = "/api/track-inspection/segment"
+        export_url = "/api/export/selected-track"
+        dataset_id = uploaded.json()["dataset"]["id"]
+        bounds = {"west": 109.99, "east": 110.04, "south": 19.99, "north": 20.02}
+        previous_version = None
+
+        for cleaned in (False, True):
+            with self.subTest(cleaned=cleaned):
+                if cleaned:
+                    self.assertEqual(client.post("/api/cleaning/run").status_code, 200)
+                    state = self.wait_for_job(client, "clean_job")
+                    self.assertEqual(state["clean_job"]["status"], "done", state)
+                manifest = client.get("/api/status").json()["active_manifest"]
+                version = ":".join(map(str, (dataset_id, manifest["data_role"], manifest["created_at"], manifest["row_count"])))
+                if previous_version:
+                    self.assertEqual(client.get(viewport, params={**bounds, "data_version": previous_version}).status_code, 409)
+                previous_version = version
+                candidates = client.get(viewport, params={**bounds, "data_version": version})
+                self.assertEqual(candidates.status_code, 200, candidates.text)
+                points = candidates.json()["points"]
+                self.assertEqual(len(points), 6)
+                point = next(p for p in points if p["lon"] == 110.003)
+                self.assertEqual(point["speed"], 0)
+                self.assertIsNone(point["heading"])
+                self.assertEqual(point["previous"], [110, 20])
+                self.assertEqual(next(p["heading"] for p in points if p["lon"] == 110 and p["mmsi"] == 413523230), 0)
+                params = {
+                    "data_version": version, "vessel_id": point["mmsi"], "track_id": point["track_id"],
+                    "anchor_time": point["timestamp"], "anchor_lon": point["lon"], "anchor_lat": point["lat"],
+                }
+                response = client.get(detail_url, params=params)
+                self.assertEqual(response.status_code, 200, response.text)
+                detail = response.json()
+                self.assertEqual(detail["point_count"], 3)
+                self.assertAlmostEqual(detail["speed_avg"], 11 / 3)
+                self.assertEqual(detail["path"], [[110, 20], [110.003, 20], [110.006, 20]])
+                response = client.get(export_url, params=params)
+                self.assertEqual(response.status_code, 200, response.text if not response.is_success else "")
+                with io.BytesIO(response.content) as content:
+                    workbook = load_workbook(content, read_only=True)
+                    try:
+                        headers, *exported = workbook.active.values
+                        self.assertEqual(len(exported), detail["point_count"])
+                        self.assertEqual([row[headers.index("lon")] for row in exported], [110, 110.003, 110.006])
+                    finally:
+                        workbook.close()
+                missing = {**params, "anchor_lon": 111}
+                self.assertEqual(client.get(detail_url, params=missing).status_code, 404)
+                self.assertEqual(client.get(export_url, params=missing).status_code, 404)
+                if cleaned:
+                    first = next(p for p in points if p["lon"] == 110 and p["mmsi"] == 413523230)
+                    filtered = {**params, "anchor_time": first["timestamp"], "anchor_lon": 110, "speed_min": 1}
+                    self.assertEqual(client.get(detail_url, params=filtered).json()["point_count"], 1)
+
     def test_pages_and_every_data_entry_require_login(self):
         anonymous = self.client()
         for path in ("/api/status", "/api/datasets", "/api/summary", "/api/density-grid",

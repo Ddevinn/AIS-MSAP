@@ -24,8 +24,19 @@ RENDER_SCALE = 2
 TRACK_COLOR = "0f4c81"
 TRACK_WIDTH = 1.8
 TRACK_OPACITY = 0.86
-CACHE_VERSION = "actual-tracks-v7-isolated-points"
+CACHE_VERSION = "actual-tracks-v8-ordered-points"
 CACHE_DIR_PATH = CACHE_DIR / "actual_track_tiles"
+
+
+TRACK_POINT_ORDER = "timestamp, lon, lat"
+
+
+def track_gap_limits(manifest: dict) -> tuple[float, int]:
+    config = manifest.get("config", {})
+    return (
+        max(0.05, float(config.get("max_segment_distance_nm", 3.0))),
+        max(1, round(float(config.get("max_time_gap_minutes", 60.0)) * 60)),
+    )
 
 
 def cached_track_tile_png(z: int, x: int, y: int, filters: QueryFilters | None = None) -> bytes | None:
@@ -104,9 +115,7 @@ def _track_tile_cached(
     source, source_params = trajectory_source(filters)
     west, south, east, north = tile_bbox_wgs84(z, x, y)
     manifest = read_active_manifest() or {}
-    cleaning_config = manifest.get("config", {})
-    max_segment_nm = max(0.05, float(cleaning_config.get("max_segment_distance_nm", 3.0)))
-    max_gap_seconds = max(1, round(float(cleaning_config.get("max_time_gap_minutes", 60.0)) * 60))
+    max_segment_nm, max_gap_seconds = track_gap_limits(manifest)
     middle_latitude = math.radians((south + north) / 2)
     lat_pad = max((north - south) * 0.08, max_segment_nm / 60)
     lon_pad = max((east - west) * 0.08, max_segment_nm / (60 * max(math.cos(middle_latitude), 0.1)))
@@ -127,7 +136,7 @@ def _track_tile_cached(
                {time_delta_select}
         FROM {source}
         {tile_where}
-        ORDER BY segment_id, mmsi, timestamp
+        ORDER BY segment_id, mmsi, {TRACK_POINT_ORDER}
     """
 
     size = TILE_SIZE * RENDER_SCALE

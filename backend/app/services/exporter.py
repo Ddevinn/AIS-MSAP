@@ -126,6 +126,7 @@ def export_points_excel(result: DuckDBPyConnection, *, kind: str) -> Path:
         "region": "区域 AIS 点",
         "section_tracks": "截面穿越轨迹",
         "behavior_tracks": "船舶行为轨迹",
+        "selected_track": "所选轨迹段",
     }[kind]
 
     def new_sheet(number: int):

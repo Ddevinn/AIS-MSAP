@@ -316,6 +316,60 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .map-card:fullscreen .map-pane { height: 100%; min-height: 0; }
 .map-card:fullscreen .map-stage { min-height: 0; }
 .map-status { padding: 7px 3px 0; color: var(--muted); font-size: 10px; }
+.track-inspection-hint { padding-top: 2px; }
+.track-inspection-popup .maplibregl-popup-content {
+  padding: 0;
+  border: 1px solid #d6e5ee;
+  border-radius: 13px;
+  box-shadow: 0 12px 30px rgba(20, 50, 72, .2);
+}
+.track-hover-popup, .track-hover-popup .maplibregl-popup-content, .track-hover-marker { pointer-events: none; }
+.track-hover-marker span {
+  display: block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #087998;
+  box-shadow: 0 0 0 3px rgba(8, 121, 152, .34);
+  animation: track-point-emphasis .16s ease-out both;
+}
+@keyframes track-point-emphasis {
+  from { transform: scale(.65); }
+  to { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .track-hover-marker span { animation: none; }
+}
+.track-selection-popup .maplibregl-popup-close-button {
+  top: 4px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: #486074;
+  font-size: 17px;
+}
+.track-inspection-card {
+  min-width: 232px;
+  padding: 12px;
+  color: #17334a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.track-inspection-title { color: #08677b; font-size: 11px; }
+.track-inspection-mmsi { margin: 3px 0 9px; font-size: 15px; font-weight: 750; }
+.track-inspection-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.track-hover-popup .track-inspection-grid > div:first-child { grid-column: 1 / -1; }
+.track-inspection-grid > div { padding: 5px 7px; border-radius: 6px; background: #f2f7fa; }
+.track-inspection-grid dt { color: #526a7d; font-size: 10px; }
+.track-inspection-grid dd { margin: 2px 0 0; font-size: 11px; font-weight: 650; overflow-wrap: anywhere; }
+.track-export-link { text-decoration: none; }
 .basemap-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 3px 0; color: var(--muted); font-size: 10px; }
 .basemap-status.has-error { color: #a65125; }
 .basemap-status button { flex-shrink: 0; padding: 3px 7px; border: 1px solid var(--line); border-radius: 5px; background: #fff; color: #24598a; font: inherit; cursor: pointer; }

@@ -68,6 +68,9 @@ from backend.app.services.query import (
     points_sql,
     trajectory_source,
 )
+from backend.app.services.track_inspection import (
+    TrackAnchor, selected_track_details, selected_track_source, viewport_track_points,
+)
 from backend.app.services.raster_tracks import (
     cached_track_tile_png,
     clear_track_tile_cache,
@@ -585,6 +588,30 @@ async def api_rendered_track_tiles(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/api/track-inspection/viewport")
+def api_track_inspection_viewport(
+    data_version: str,
+    west: float = Query(ge=-180, le=180),
+    south: float = Query(ge=-90, le=90),
+    east: float = Query(ge=-180, le=180),
+    north: float = Query(ge=-90, le=90),
+    filters: QueryFilters = Depends(parse_filters),
+) -> dict:
+    if west >= east or south >= north:
+        raise HTTPException(422, "地图视窗范围无效。")
+    return _call(viewport_track_points, filters, data_version, west, south, east, north)
+
+
+@app.get("/api/track-inspection/segment")
+def api_track_inspection_segment(
+    anchor: TrackAnchor = Depends(), filters: QueryFilters = Depends(parse_filters),
+) -> dict:
+    detail = _call(selected_track_details, filters, anchor)
+    if detail is None:
+        raise HTTPException(404, "找不到所选轨迹，请重新点选。")
+    return detail
+
+
 @app.get("/api/track/{mmsi}")
 def api_track(mmsi: int, max_points: int = 50000) -> dict[str, object]:
     return _call(track_points, mmsi=mmsi, max_points=max_points)
@@ -645,7 +672,16 @@ def api_export_spatial(filters: QueryFilters = Depends(parse_filters)) -> FileRe
     return _export_points(kind=kind, filters=filters)
 
 
-def _export_points(*, kind: str, filters: QueryFilters | None = None) -> FileResponse:
+@app.get("/api/export/selected-track")
+def api_export_selected_track(
+    anchor: TrackAnchor = Depends(), filters: QueryFilters = Depends(parse_filters),
+) -> FileResponse:
+    return _export_points(kind="selected_track", filters=filters, anchor=anchor)
+
+
+def _export_points(
+    *, kind: str, filters: QueryFilters | None = None, anchor: TrackAnchor | None = None,
+) -> FileResponse:
     with connect() as con:
         # Materialize the query before a build, reset or removal can replace the Parquet.
         with _build_lock, _clean_lock:
@@ -655,6 +691,12 @@ def _export_points(*, kind: str, filters: QueryFilters | None = None) -> FileRes
                 if not cleaned_dataset_ready():
                     raise HTTPException(409, "请先完成当前数据集的清洗。")
                 source, params = points_sql(cleaned_parquet_path()), []
+            elif anchor is not None:
+                source, params = _call(selected_track_source, filters, anchor)
+                _call(con.execute, f"CREATE TEMP TABLE picked_track AS SELECT * FROM {source}", params)
+                if not con.execute("SELECT 1 FROM picked_track LIMIT 1").fetchone():
+                    raise HTTPException(404, "找不到所选轨迹，请重新点选。")
+                source, params = "picked_track", []
             else:
                 if not dataset_ready():
                     raise HTTPException(409, "请先选择并加载数据。")

@@ -612,6 +612,7 @@ function clearDatasetResults() {
   clearDirectionCharts();
   const map = state.map;
   clearDensityData();
+  resetTrackInspection();
   if (map?.getLayer("ais-tracks-raster")) map.removeLayer("ais-tracks-raster");
   if (map?.getSource("ais-tracks")) map.removeSource("ais-tracks");
   $("mapStatus").textContent = "等待加载数据";
@@ -1245,6 +1246,7 @@ function initMap() {
     state.mapLoaded = true;
     initMarkerLayers();
     initDensityLayers();
+    initTrackInspection();
     renderMarkers();
     refreshTrackTiles();
     fitMapToDataOnce();
@@ -1979,6 +1981,7 @@ function refreshTrackTiles() {
   const map = state.map;
   if (!map || !state.mapLoaded) return;
 
+  resetTrackInspection();
   const sourceId = "ais-tracks";
   const layerId = "ais-tracks-raster";
   if (map.getLayer(layerId)) map.removeLayer(layerId);
@@ -2017,8 +2020,10 @@ function refreshTrackTiles() {
   ["marker-region-fill", "marker-route-line", "marker-section-line", "marker-region-line", "marker-point", "draft-fill", "draft-line", "draft-points"].forEach((id) => {
     if (map.getLayer(id)) map.moveLayer(id);
   });
+  TRACK_INSPECTION_LAYERS.forEach((id) => map.moveLayer(id, "marker-region-fill"));
   updateDensityStyle();
   refreshDensityLayer();
+  scheduleTrackInspection();
   $("mapStatus").textContent = "正在加载轨迹地图";
   const source = map.getSource(sourceId);
   map.once("idle", () => {
