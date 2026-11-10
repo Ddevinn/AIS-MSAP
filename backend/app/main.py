@@ -630,13 +630,6 @@ def api_export_filtered(filters: QueryFilters = Depends(parse_filters)) -> FileR
     return _export_points(kind="filtered", filters=filters)
 
 
-@app.get("/api/export/behavior")
-def api_export_behavior(filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
-    if not filters.behavior:
-        raise HTTPException(422, "请先选择要导出的船舶行为。")
-    return _export_points(kind="behavior_tracks", filters=filters)
-
-
 @app.get("/api/export/spatial")
 def api_export_spatial(filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
     if not filters.spatial_mode or not filters.spatial_geometry:
@@ -658,7 +651,7 @@ def _export_points(*, kind: str, filters: QueryFilters | None = None) -> FileRes
             else:
                 if not dataset_ready():
                     raise HTTPException(409, "请先选择并加载数据。")
-                query_source = trajectory_source if kind in {"section_tracks", "behavior_tracks"} else analysis_source
+                query_source = trajectory_source if kind == "section_tracks" else analysis_source
                 source, params = query_source(filters)
             fields = {column[0] for column in _call(con.execute, f"DESCRIBE SELECT * FROM {source}", params).fetchall()}
             internal = [column for column in SOURCE_COLUMNS if column in fields]
