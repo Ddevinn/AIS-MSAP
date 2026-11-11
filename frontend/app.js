@@ -1377,6 +1377,7 @@ function showMarkerOverview() {
 function openMarkerEditor(type) {
   if (!MARKER_RULES[type]) return;
   selectMarkerType(type);
+  $("markerCategoryInput").value = DEFAULT_MARKER_CATEGORY;
   document.querySelector(".marker-groups-section").hidden = true;
   document.querySelector(".marker-library").hidden = true;
   document.querySelector(".marker-create-section").hidden = false;
@@ -1406,6 +1407,13 @@ function selectAreaShape(shape) {
     button.classList.toggle("active", button.dataset.areaShape === shape);
   });
   $("markerDrawHint").textContent = currentMarkerRule().hint;
+}
+
+const DEFAULT_MARKER_CATEGORY = "未分类";
+const MARKER_CATEGORY_ORDER = new Intl.Collator("zh-CN", { numeric: true });
+
+function markerCategory(value) {
+  return typeof value === "string" ? value.trim() || DEFAULT_MARKER_CATEGORY : DEFAULT_MARKER_CATEGORY;
 }
 
 const MARKER_RULES = {
@@ -1536,7 +1544,7 @@ function addCoordinatePoints() {
 
 function savePointMarkers(points) {
   const baseName = $("markerNameInput").value.trim();
-  const category = $("markerCategoryInput").value.trim() || "未分类";
+  const category = markerCategory($("markerCategoryInput").value);
   const color = $("markerColorInput").value;
   if (state.editingMarkerId) {
     if (points.length !== 1) {
@@ -1566,7 +1574,7 @@ function savePointMarkers(points) {
   persistMarkers();
   $("markerCoordinatesInput").value = "";
   $("markerNameInput").value = "";
-  renderMarkers();
+  renderMarkers(category);
   updateSpatialMarkerOptions();
   state.map.fitBounds(points.reduce((bounds, point) => bounds.extend(point), new maplibregl.LngLatBounds()), { padding: 80, maxZoom: 14 });
   $("markerDrawHint").textContent = `已批量保存 ${points.length} 个点标记。`;
@@ -1616,7 +1624,7 @@ function finishMarkerDrawing() {
     type: state.markerType,
     areaShape: state.markerType === "region" ? state.areaShape : null,
     name: $("markerNameInput").value.trim() || `${rule.label}标记 ${state.markers.filter((item) => item.type === state.markerType).length + 1}`,
-    category: $("markerCategoryInput").value.trim() || "未分类",
+    category: markerCategory($("markerCategoryInput").value),
     color: $("markerColorInput").value,
     visible: state.markers.find((item) => item.id === state.editingMarkerId)?.visible !== false,
     points: geometryPoints.map((point) => [Number(point[0].toFixed(8)), Number(point[1].toFixed(8))]),
@@ -1628,8 +1636,7 @@ function finishMarkerDrawing() {
   stopMarkerDrawing();
   state.editingMarkerId = null;
   $("markerNameInput").value = "";
-  renderMarkers();
-  renderMarkerList();
+  renderMarkers(marker.category);
   updateSpatialMarkerOptions();
   $("markerDrawHint").textContent = `${marker.name} 已保存${marker.type === "section" || marker.type === "region" ? "，可以按此标记查看统计" : ""}。`;
   showMarkerOverview();
@@ -1728,27 +1735,58 @@ function markerFeature(marker) {
   return { type: "Feature", properties, geometry };
 }
 
-function renderMarkers() {
+function renderMarkers(openCategory) {
   const source = state.map?.getSource("saved-markers");
   if (source) source.setData({
     type: "FeatureCollection",
     features: state.markers.filter((marker) => marker.visible !== false).map(markerFeature),
   });
-  renderMarkerList();
+  renderMarkerList(openCategory);
 }
 
-function renderMarkerList() {
+function renderMarkerList(openCategory) {
   const container = $("markerList");
   updateMarkerGroupCounts();
   if (!state.markers.length) {
     container.innerHTML = '<div class="empty-state">尚未保存标记</div>';
     return;
   }
-  container.innerHTML = state.markers.map((marker) => `
+  const expanded = new Set(Array.from(container.querySelectorAll(".marker-category[open]"), (group) => group.dataset.category));
+  if (openCategory) expanded.add(openCategory);
+  const scrollTop = container.scrollTop;
+  const groups = new Map();
+  for (const marker of state.markers) {
+    const category = markerCategory(marker.category);
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(marker);
+  }
+  const categories = [...groups.keys()].filter((category) => category !== DEFAULT_MARKER_CATEGORY)
+    .sort(MARKER_CATEGORY_ORDER.compare);
+  if (groups.has(DEFAULT_MARKER_CATEGORY)) categories.unshift(DEFAULT_MARKER_CATEGORY);
+
+  container.innerHTML = categories.map((category) => {
+    const label = escapeHtml(category);
+    const markers = groups.get(category);
+    return `
+      <details class="marker-category" data-category="${label}" ${expanded.has(category) ? "open" : ""}>
+        <summary title="${label}">
+          <svg class="ui-icon" aria-hidden="true"><use href="#i-chevron" /></svg>
+          <b>${label}</b>
+          <span class="marker-category-count">${numberFormat.format(markers.length)} 个</span>
+        </summary>
+        <div class="marker-category-items">${markers.map(renderMarkerItem).join("")}</div>
+      </details>
+    `;
+  }).join("");
+  container.scrollTop = scrollTop;
+}
+
+function renderMarkerItem(marker) {
+  return `
     <article class="marker-item ${state.spatialFilter?.markerId === marker.id ? "active" : ""} ${marker.visible === false ? "hidden-marker" : ""}">
       <button class="marker-main" onclick="zoomToMarker(${marker.id})">
         <i style="--marker-color:${escapeHtml(marker.color)}"></i>
-        <span><b>${escapeHtml(marker.name)}</b><small>${markerTypeLabel(marker)} · ${escapeHtml(marker.category)} · ${marker.type === "region" && (marker.areaShape || "polygon") !== "polygon" ? "自动生成边界" : `${marker.points.length} 节点`}</small></span>
+        <span><b>${escapeHtml(marker.name)}</b><small>${markerTypeLabel(marker)} · ${marker.type === "region" && (marker.areaShape || "polygon") !== "polygon" ? "自动生成边界" : `${marker.points.length} 节点`}</small></span>
       </button>
       <div class="marker-actions">
         ${["section", "region"].includes(marker.type) ? `<button class="visibility" onclick="toggleMarkerVisibility(${marker.id})" title="${marker.visible === false ? "显示标记" : "隐藏标记"}" aria-label="${marker.visible === false ? "显示标记" : "隐藏标记"}" aria-pressed="${marker.visible === false}"><svg class="ui-icon" aria-hidden="true"><use href="#${marker.visible === false ? "i-eye-off" : "i-eye"}" /></svg></button>` : ""}
@@ -1756,7 +1794,7 @@ function renderMarkerList() {
         <button class="delete" onclick="deleteMarker(${marker.id})" title="删除" aria-label="删除"><svg class="ui-icon" aria-hidden="true"><use href="#i-trash" /></svg></button>
       </div>
     </article>
-  `).join("");
+  `;
 }
 
 function loadMarkers() {
@@ -1764,7 +1802,9 @@ function loadMarkers() {
     const saved = JSON.parse(localStorage.getItem(`ais-platform-markers:user_${AIS.user.id}`) || "[]");
     state.markers = Array.isArray(saved)
       ? saved.filter(validStoredMarker).map((marker) => ({
-        ...marker, visible: !["section", "region"].includes(marker.type) && marker.visible !== false,
+        ...marker,
+        category: markerCategory(marker.category),
+        visible: !["section", "region"].includes(marker.type) && marker.visible !== false,
       }))
       : [];
   } catch {
