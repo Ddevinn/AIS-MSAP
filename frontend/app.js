@@ -195,6 +195,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
   $("applyBtn").addEventListener("click", () => {
     state.filters = collectFilters();
+    syncVesselScope();
     loadAll();
     refreshTrackTiles();
   });
@@ -409,6 +410,7 @@ async function pollStatus() {
       shipTypeInput.value = "";
       delete state.filters.ship_type_min;
       delete state.filters.ship_type_max;
+      syncVesselScope();
     }
     $("exportFilteredBtn").disabled = processing || !data.dataset_ready;
     updateSpatialExportButton();
@@ -1866,6 +1868,7 @@ async function applySpatialFilter() {
   state.spatialFilter = { mode, markerId };
   state.filters.spatial_mode = mode;
   state.filters.spatial_geometry = JSON.stringify(marker.points);
+  syncVesselScope();
   updateSpatialExportButton();
   $("spatialFilterStatus").textContent = `正在统计：${marker.name}`;
   $("spatialTrafficStats").textContent = "正在统计该标记范围…";
@@ -1879,6 +1882,7 @@ async function clearSpatialFilter() {
   state.spatialFilter = null;
   delete state.filters.spatial_mode;
   delete state.filters.spatial_geometry;
+  syncVesselScope();
   updateSpatialExportButton();
   $("spatialFilterStatus").textContent = "正在查看全部数据";
   $("spatialTrafficStats").textContent = "选择截面或区域标记后显示交通流统计";
@@ -1903,6 +1907,7 @@ function renderSpatialTrafficStats(data) {
 }
 
 function refreshTrackTiles() {
+  syncVesselScope();
   const map = state.map;
   if (!map || !state.mapLoaded) return;
 

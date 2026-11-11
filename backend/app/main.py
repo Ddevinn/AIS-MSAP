@@ -68,6 +68,7 @@ from backend.app.services.query import (
     points_sql,
     trajectory_source,
 )
+from backend.app.services.vessel_identity import shutdown_vessel_identity
 from backend.app.services.vessel_history import VesselPeriod, vessel_history, vessel_period_source, vessel_profile
 from backend.app.services.track_inspection import (
     TrackAnchor, selected_track_annotations, selected_track_details, selected_track_source, viewport_track_points,
@@ -97,6 +98,7 @@ def _render_pool() -> ThreadPoolExecutor:
 
 @app.on_event("shutdown")
 def shutdown_render_pool() -> None:
+    shutdown_vessel_identity()
     global _track_render_pool
     if _track_render_pool is not None:
         _track_render_pool.shutdown(wait=True, cancel_futures=True)
@@ -648,14 +650,30 @@ def parse_vessel_period(
     return VesselPeriod(mmsi, start_ts, end_ts, data_version)
 
 
+def parse_vessel_filters(
+    filter_mmsi: int | None = Query(default=None),
+    filter_start_ts: int | None = Query(default=None),
+    filter_end_ts: int | None = Query(default=None),
+    filters: QueryFilters = Depends(parse_filters),
+) -> QueryFilters:
+    return replace(filters, mmsi=filter_mmsi, start_ts=filter_start_ts, end_ts=filter_end_ts)
+
+
 @app.get("/api/vessels/profile")
-def api_vessel_profile(data_version: str, mmsi: int = Query(ge=100_000_000, le=999_999_999)) -> dict:
-    return {"vessel": _call(vessel_profile, mmsi, data_version)}
+def api_vessel_profile(
+    data_version: str,
+    mmsi: int = Query(ge=100_000_000, le=999_999_999),
+    filters: QueryFilters = Depends(parse_vessel_filters),
+) -> dict:
+    return {"vessel": _call(vessel_profile, mmsi, data_version, filters)}
 
 
 @app.get("/api/vessels/history")
-def api_vessel_history(period: VesselPeriod = Depends(parse_vessel_period)) -> dict:
-    return _call(vessel_history, period)
+def api_vessel_history(
+    period: VesselPeriod = Depends(parse_vessel_period),
+    filters: QueryFilters = Depends(parse_vessel_filters),
+) -> dict:
+    return _call(vessel_history, period, filters)
 
 
 @app.get("/api/track/{mmsi}")
@@ -726,8 +744,11 @@ def api_export_selected_track(
 
 
 @app.get("/api/export/vessel-history")
-def api_export_vessel_history(period: VesselPeriod = Depends(parse_vessel_period)) -> FileResponse:
-    return _export_points(kind="vessel_history", period=period)
+def api_export_vessel_history(
+    period: VesselPeriod = Depends(parse_vessel_period),
+    filters: QueryFilters = Depends(parse_vessel_filters),
+) -> FileResponse:
+    return _export_points(kind="vessel_history", period=period, filters=filters)
 
 
 def _export_points(
@@ -750,7 +771,7 @@ def _export_points(
                     raise HTTPException(404, "找不到所选轨迹，请重新点选。")
                 source, params = "picked_track", []
             elif period is not None:
-                source, params, _ = _call(vessel_period_source, period)
+                source, params, _ = _call(vessel_period_source, period, filters)
             else:
                 if not dataset_ready():
                     raise HTTPException(409, "请先选择并加载数据。")

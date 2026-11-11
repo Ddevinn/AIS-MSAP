@@ -1,5 +1,7 @@
 const vesselHistory = {
   profile: null,
+  scope: null,
+  identityTimer: null,
   result: null,
   pending: null,
   revision: 0,
@@ -7,7 +9,7 @@ const vesselHistory = {
   exporting: false,
 };
 
-const vesselHistoryLayers = ["vessel-history-outline", "vessel-history-line", "vessel-history-point", "vessel-history-focus"];
+const vesselHistoryLayers = ["vessel-history-outline", "vessel-history-line", "vessel-history-point", "vessel-history-vertices"];
 const vesselHistoryFeatures = () => ({ type: "FeatureCollection", features: [] });
 const vesselChartFields = {
   speed: { title: "航速分析", name: "航速", unit: " kn", color: "#2563eb" },
@@ -66,7 +68,9 @@ function resetVesselHistory() {
 }
 
 function clearVesselSearch() {
-  vesselHistory.profile = null;
+  clearTimeout(vesselHistory.identityTimer);
+  vesselHistory.identityTimer = null;
+  vesselHistory.scope = vesselHistory.profile = null;
   $("vesselCard").hidden = true;
   $("vesselCard").classList.remove("is-dragged");
   clearVesselPeriod();
@@ -81,8 +85,29 @@ function clearVesselPeriod() {
   updateVesselActions();
 }
 
+function vesselScope() {
+  const { mmsi, start_ts, end_ts } = state.filters;
+  const params = new URLSearchParams(queryString({
+    data_version: state.activeKey, behavior: state.behaviorFilter,
+    mmsi: null, start_ts: null, end_ts: null,
+    filter_mmsi: mmsi, filter_start_ts: start_ts, filter_end_ts: end_ts,
+  }));
+  params.sort();
+  return params.toString();
+}
+
+function syncVesselScope() {
+  if (vesselHistory.scope !== null && vesselHistory.scope !== vesselScope()) {
+    clearVesselSearch();
+    showVesselSearchStatus("");
+  }
+}
+
 function vesselParams(mmsi, period = {}) {
-  return new URLSearchParams({ dataset_id: state.activeDatasetId, data_version: state.activeKey, mmsi, ...period });
+  const params = new URLSearchParams(vesselHistory.scope);
+  params.set("mmsi", mmsi);
+  for (const [key, value] of Object.entries(period)) params.set(key, value);
+  return params;
 }
 
 async function searchVessel(event) {
@@ -93,6 +118,7 @@ async function searchVessel(event) {
     showVesselSearchStatus("请输入 9 位 MMSI。");
     return;
   }
+  syncVesselScope();
   if (String(vesselHistory.profile?.mmsi) === mmsi) {
     $("vesselCard").hidden = false;
     placeVesselCard();
@@ -101,13 +127,20 @@ async function searchVessel(event) {
     return;
   }
   clearVesselSearch();
+  vesselHistory.scope = vesselScope();
   const revision = vesselHistory.revision;
   showVesselSearchStatus("正在搜索船舶…");
   try {
-    const { vessel } = await api("/api/vessels/profile?" + vesselParams(mmsi));
+    const url = "/api/vessels/profile?" + vesselParams(mmsi);
+    const { vessel } = await api(url);
+    syncVesselScope();
     if (revision !== vesselHistory.revision || $("vesselMmsi").value.trim() !== mmsi) return;
-    showVesselSearchStatus(vessel ? "" : "未搜索到船舶");
-    if (vessel) renderVesselCard(vessel);
+    const filtered = Object.keys(state.filters).length > 0 || state.behaviorFilter;
+    showVesselSearchStatus(vessel ? "" : filtered ? "当前筛选范围内未搜索到船舶" : "未搜索到船舶");
+    if (vessel) {
+      renderVesselCard(vessel);
+      scheduleVesselIdentity(vessel, url);
+    }
   } catch (error) {
     if (revision === vesselHistory.revision && $("vesselMmsi").value.trim() === mmsi) {
       showVesselSearchStatus(error.message || "船舶搜索失败。");
@@ -115,29 +148,59 @@ async function searchVessel(event) {
   }
 }
 
+function scheduleVesselIdentity(profile, url) {
+  if (!profile.identity_pending) return;
+  vesselHistory.identityTimer = setTimeout(async () => {
+    vesselHistory.identityTimer = null;
+    try {
+      const { vessel } = await api(url);
+      syncVesselScope();
+      if (vesselHistory.profile !== profile) return;
+      if (vessel?.identity_pending) {
+        scheduleVesselIdentity(profile, url);
+        return;
+      }
+      Object.assign(profile, {
+        ship_name: vessel?.ship_name, imo: vessel?.imo, callsign: vessel?.callsign, identity_pending: false,
+      });
+    } catch (error) {
+      if (vesselHistory.profile !== profile) return;
+      profile.identity_pending = false;
+      console.error("Vessel identity lookup", error);
+    }
+    renderVesselDetails(profile);
+  }, 4000);
+}
+
 function vesselMeasure(value, digits, unit) {
   return value == null ? "-" : formatNumber(value, digits) + unit;
 }
 
-function renderVesselCard(vessel) {
-  vesselHistory.profile = vessel;
+function renderVesselDetails(vessel) {
+  const missingIdentity = vessel.identity_pending ? "正在补查…" : "-";
   $("vesselCardTitle").textContent = vessel.ship_name || "MMSI " + vessel.mmsi;
   const fields = [
-    ["船名", vessel.ship_name || "-", "wide"],
+    ["船名", vessel.ship_name || missingIdentity, "wide"],
     ["MMSI", vessel.mmsi],
-    ["IMO", vessel.imo || "-"],
-    ["呼号", vessel.callsign || "-"],
+    ["IMO", vessel.imo || missingIdentity],
+    ["呼号", vessel.callsign || missingIdentity],
     ["船舶尺寸（长 × 宽）", vesselMeasure(vessel.length, 1, " m") + " × " + vesselMeasure(vessel.width, 1, " m")],
     ["吃水", vesselMeasure(vessel.draught, 2, " m")],
     ["船首向", vesselMeasure(vessel.heading, 1, "°")],
     ["对地航向", vesselMeasure(vessel.course, 1, "°")],
     ["航速", vesselMeasure(vessel.speed, 2, " kn")],
     ["经纬度", vessel.lon.toFixed(6) + "°, " + vessel.lat.toFixed(6) + "°", "wide"],
-    ["历史最近更新时间", vesselDate(vessel.end_ts), "wide"],
+    [Object.keys(state.filters).length || state.behaviorFilter ? "筛选范围内最近更新时间" : "历史最近更新时间",
+      vesselDate(vessel.end_ts), "wide"],
   ];
   $("vesselDetails").innerHTML = fields.map(([name, value, width]) =>
     '<div class="' + (width || "") + '"><dt>' + name + '</dt><dd>' + escapeHtml(value) + '</dd></div>'
   ).join("");
+}
+
+function renderVesselCard(vessel) {
+  vesselHistory.profile = vessel;
+  renderVesselDetails(vessel);
   const start = vesselDate(vessel.start_ts).replace(" ", "T");
   const end = vesselDate(vessel.end_ts).replace(" ", "T");
   for (const input of [$("vesselStart"), $("vesselEnd")]) {
@@ -163,6 +226,7 @@ function updateVesselActions() {
 }
 
 async function requestVesselHistory(fit = false) {
+  syncVesselScope();
   const profile = vesselHistory.profile;
   if (!profile || !$("vesselPeriod").reportValidity()) return null;
   const start = Date.parse($("vesselStart").value + "+08:00") / 1000;
@@ -183,6 +247,7 @@ async function requestVesselHistory(fit = false) {
   vesselHistory.pending = (async () => {
     try {
       const result = await api("/api/vessels/history?" + params);
+      syncVesselScope();
       if (revision !== vesselHistory.revision) return null;
       result.params = params;
       vesselHistory.result = result;
@@ -206,6 +271,7 @@ async function requestVesselHistory(fit = false) {
 }
 
 async function exportVesselHistory() {
+  syncVesselScope();
   const result = vesselHistory.result;
   if (!result?.point_count || vesselHistory.exporting) return;
   vesselHistory.exporting = true;
@@ -217,6 +283,7 @@ async function exportVesselHistory() {
       throw new Error(error.detail || "轨迹导出失败。");
     }
     const blob = await response.blob();
+    syncVesselScope();
     if (vesselHistory.result !== result) return;
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -236,25 +303,37 @@ function initVesselHistoryLayers() {
   const map = state.map;
   map.addSource("vessel-history", { type: "geojson", data: vesselHistoryFeatures() });
   map.addSource("vessel-history-location", { type: "geojson", data: vesselHistoryFeatures() });
-  const line = { type: "line", source: "vessel-history", layout: { "line-cap": "round", "line-join": "round" } };
+  const line = {
+    type: "line", source: "vessel-history",
+    filter: ["==", ["geometry-type"], "LineString"],
+    layout: { "line-cap": "round", "line-join": "round" },
+  };
   map.addLayer({ ...line, id: vesselHistoryLayers[0], paint: { "line-color": "#173854", "line-width": 7 } });
   map.addLayer({ ...line, id: vesselHistoryLayers[1], paint: { "line-color": "#47e3e1", "line-width": 4 } });
   map.addLayer({
     id: vesselHistoryLayers[2], type: "circle", source: "vessel-history",
-    filter: ["==", ["geometry-type"], "Point"],
+    filter: ["==", ["get", "role"], "isolated"],
     paint: { "circle-color": "#47e3e1", "circle-radius": 5, "circle-stroke-color": "#173854", "circle-stroke-width": 2 },
   });
   map.addLayer({
-    id: vesselHistoryLayers[3], type: "circle", source: "vessel-history-location",
+    id: vesselHistoryLayers[3], type: "circle", source: "vessel-history", minzoom: 13,
+    filter: ["==", ["get", "role"], "vertex"],
+    paint: { "circle-color": "#0d657b", "circle-radius": 3.4, "circle-stroke-color": "#fff", "circle-stroke-width": 1.3 },
+  });
+  map.addLayer({
+    id: "vessel-history-focus", type: "circle", source: "vessel-history-location",
     paint: { "circle-color": "#146bc3", "circle-radius": 9, "circle-stroke-color": "#fff", "circle-stroke-width": 3 },
   });
+  raiseVesselHistoryLayers();
   if (vesselHistory.result) showVesselHistoryOnMap(vesselHistory.result, true);
 }
 
 function raiseVesselHistoryLayers() {
+  const map = state.map;
   for (const id of vesselHistoryLayers) {
-    if (state.map.getLayer(id)) state.map.moveLayer(id);
+    if (map.getLayer(id)) map.moveLayer(id, "ais-inspect-dots");
   }
+  if (map.getLayer("vessel-history-focus")) map.moveLayer("vessel-history-focus");
 }
 
 function showVesselHistoryOnMap(result, fit) {
@@ -267,7 +346,10 @@ function showVesselHistoryOnMap(result, fit) {
     const geometry = coordinates.length === 1
       ? { type: "Point", coordinates: coordinates[0] }
       : { type: "LineString", coordinates };
-    data.features.push({ type: "Feature", geometry, properties: {} });
+    data.features.push({ type: "Feature", geometry, properties: { role: coordinates.length === 1 ? "isolated" : "line" } });
+    if (coordinates.length > 1) {
+      data.features.push({ type: "Feature", geometry: { type: "MultiPoint", coordinates }, properties: { role: "vertex" } });
+    }
     if (fit) for (const coordinate of coordinates) bounds.extend(coordinate);
   }
   source.setData(data);
