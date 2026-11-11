@@ -6,7 +6,7 @@
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261110-track-controls-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261111-vessel-history-1" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
@@ -199,7 +199,12 @@
                 <span class="section-icon map"><svg class="ui-icon" aria-hidden="true"><use href="#i-map" /></svg></span>
                 <div><span class="eyebrow">空间分析</span><h2>船舶轨迹与活动密度</h2><p>在地图上探索船舶活动热点、查看行为轨迹，并按区域或截面筛选</p></div>
               </div>
-              <div class="button-row tight">
+              <div class="button-row tight vessel-map-actions">
+                <form id="vesselSearch" class="vessel-search" role="search" aria-label="地图船舶搜索">
+                  <input id="vesselMmsi" type="text" inputmode="numeric" maxlength="9" autocomplete="off" placeholder="输入 9 位 MMSI" aria-label="船舶 MMSI" disabled />
+                  <button id="vesselSearchBtn" class="btn dark" type="submit" disabled>查看船舶</button>
+                  <p id="vesselSearchStatus" role="status" hidden></p>
+                </form>
                 <button id="mapFullscreenBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-maximize" /></svg><span id="mapFullscreenText">全屏查看</span></button>
                 <button id="fitMapBtn" class="btn ghost"><svg class="ui-icon" aria-hidden="true"><use href="#i-locate" /></svg>回到数据范围</button>
                 <button id="reloadTracksBtn" class="btn dark"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>刷新图层</button>
@@ -209,6 +214,37 @@
             <div class="map-workspace">
               <div class="map-pane">
                 <div id="map" class="map-stage"></div>
+                <div id="vesselOverlays" class="vessel-overlays">
+                  <section id="vesselCard" class="vessel-window vessel-card" aria-labelledby="vesselCardTitle" hidden>
+                    <header class="vessel-window-head">
+                      <div><span class="eyebrow">AIS 船舶信息</span><h3 id="vesselCardTitle"></h3></div>
+                      <button id="closeVesselCard" class="vessel-window-close" type="button" aria-label="关闭船舶信息">×</button>
+                    </header>
+                    <div class="vessel-window-body">
+                      <dl id="vesselDetails" class="vessel-details"></dl>
+                      <section class="vessel-query" aria-labelledby="vesselQueryTitle">
+                        <h4 id="vesselQueryTitle">轨迹查询</h4>
+                        <form id="vesselPeriod">
+                          <div class="vessel-period-fields">
+                            <label>开始时间<input id="vesselStart" type="datetime-local" step="1" required /></label>
+                            <label>结束时间<input id="vesselEnd" type="datetime-local" step="1" required /></label>
+                          </div>
+                          <p class="vessel-period-zone">北京时间（UTC+8）</p>
+                          <div class="vessel-query-actions">
+                            <button id="queryVesselTrack" class="btn dark" type="submit">查询</button>
+                            <button id="exportVesselTrack" class="btn ghost" type="button" disabled>导出</button>
+                          </div>
+                        </form>
+                        <p id="vesselQueryStatus" class="vessel-query-status" role="status"></p>
+                        <div class="vessel-analysis-actions" aria-label="单船分析">
+                          <button class="btn ghost" type="button" data-vessel-chart="speed">航速分析</button>
+                          <button class="btn ghost" type="button" data-vessel-chart="course">对地航向分析</button>
+                          <button class="btn ghost" type="button" data-vessel-chart="heading">船首向分析</button>
+                        </div>
+                      </section>
+                    </div>
+                  </section>
+                </div>
                 <div class="map-layer-switches" role="group" aria-label="地图图层">
                   <button id="densityToggleBtn" type="button" aria-pressed="false"><span class="density-layer-dot"></span>空间密度</button>
                   <button id="tracksToggleBtn" type="button" aria-pressed="false"><span class="track-layer-dot"></span>船舶轨迹</button>
@@ -373,12 +409,6 @@
               <p class="chart-note" id="headingDirectionStatus" role="status"></p>
               <div class="chart-stage"><canvas id="headingDirectionCanvas" aria-label="船首向分布直方图"></canvas></div>
             </article>
-            <article class="chart-card wide" id="directionTimeCard">
-              <div class="chart-head direction-time-head"><div class="chart-title"><span class="chart-icon cyan"><svg class="ui-icon" aria-hidden="true"><use href="#i-chart" /></svg></span><div><span class="eyebrow">单船航向分析</span><h3>对地航向与船首向时间曲线</h3></div></div><div class="direction-vessel-control"><input id="directionMmsiInput" type="text" inputmode="numeric" placeholder="输入 9 位 MMSI" aria-label="时间曲线船舶编号" /><button id="applyDirectionMmsiBtn" class="btn dark" type="button">查看船舶</button></div></div>
-              <p class="chart-note">0° 为北，90° 为东，180° 为南，270° 为西。跨越 0° 或轨迹断点处断开连线。</p>
-              <p class="chart-note direction-time-status" id="directionTimeStatus" role="status">输入船舶编号后查看双曲线，并与当前时间、水域筛选联动。</p>
-              <div class="chart-stage wide"><canvas id="directionTimeCanvas" aria-label="单船对地航向和船首向时间曲线"></canvas></div>
-            </article>
             <article class="chart-card">
               <div class="chart-head"><div class="chart-title"><span class="chart-icon blue"><svg class="ui-icon" aria-hidden="true"><use href="#i-clock" /></svg></span><div><span class="eyebrow">统计图表</span><h3>航速分布</h3></div></div><select id="speedBinWidthSelect"><option value="0.5">0.5 kn</option><option value="1" selected>1 kn</option><option value="2">2 kn</option><option value="5">5 kn</option></select></div>
               <div class="chart-stage"><canvas id="speedCanvas"></canvas></div>
@@ -409,10 +439,11 @@
     <script src="/static/vendor/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261110-track-controls-1"></script>
+    <script src="/static/app.js?v=20261111-vessel-history-1"></script>
     <script src="/static/density.js?v=20261110-fixed-grid-size-1"></script>
     <script src="/static/track-inspection.js?v=20261110-track-controls-1"></script>
     <script src="/static/track-annotations.js?v=20261110-1"></script>
+    <script src="/static/vessel-history.js?v=20261111-vessel-history-1"></script>
     <dialog id="densityGridExportDialog" class="quality-dialog" aria-labelledby="densityGridExportTitle">
       <form method="dialog">
         <h2 id="densityGridExportTitle">导出当前计数网格</h2>

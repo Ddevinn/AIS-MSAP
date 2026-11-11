@@ -23,6 +23,11 @@ TABULAR_SUFFIXES = {".csv", ".xlsx", ".xls"}
 REQUIRED_FIELDS = ("mmsi", "timestamp", "lon", "lat", "speed", "course")
 OPTIONAL_FIELDS = ("ship_type", "length", "width", "draught", "heading")
 STANDARD_FIELDS = (*REQUIRED_FIELDS, *OPTIONAL_FIELDS)
+VESSEL_IDENTITY_ALIASES = {
+    "ship_name": ("ship_name", "vessel_name", "name", "船名", "船舶名称"),
+    "imo": ("imo", "imo_number", "imo_no", "imo编号", "imo号码"),
+    "callsign": ("callsign", "call_sign", "radio_call_sign", "呼号", "船舶呼号"),
+}
 FIELD_LABELS = {
     "mmsi": "MMSI", "timestamp": "时间", "lon": "经度", "lat": "纬度",
     "speed": "航速", "course": "对地航向", "ship_type": "船舶类型",
@@ -88,6 +93,25 @@ def resolve_fields(columns: list[str]) -> dict[str, str]:
     if missing:
         raise ValueError("缺少必需字段：" + "、".join(missing))
     return mapping
+
+
+def vessel_identity_fields(columns: list[str]) -> dict[str, str]:
+    lookup = {normalize_header(column): column for column in columns}
+    mapping = {}
+    for field, aliases in VESSEL_IDENTITY_ALIASES.items():
+        for alias in aliases:
+            if column := lookup.get(normalize_header(alias)):
+                mapping[field] = column
+                break
+    return mapping
+
+
+def vessel_identity_values(values: pd.Series, field: str) -> pd.Series:
+    text = values.astype("string").str.strip()
+    text = text.mask(_missing(text) | text.isin({"0", "0.0", "-1", "-1.0", "@", "@@@@@@@", "0000000"}))
+    if field == "imo":
+        text = text.str.replace(r"^(\d+)\.0+$", r"\1", regex=True)
+    return text
 
 
 def _headers(values: tuple[Any, ...] | list[Any]) -> list[str]:
@@ -353,6 +377,7 @@ def build_tabular_parquet(path: Path, output_path: Path, manifest_path: Path, da
         pa.field("course", pa.float64()), pa.field("speed", pa.float64()),
         pa.field("ship_type", pa.int16()), pa.field("length", pa.float64()), pa.field("width", pa.float64()),
         pa.field("draught", pa.float64()), pa.field("heading", pa.float64()), pa.field("trajectory_id", pa.int32()),
+        *(pa.field(field, pa.string()) for field in VESSEL_IDENTITY_ALIASES),
         pa.field("source_point_id", pa.int64()), pa.field("source_sheet", pa.string()),
         pa.field("source_record", pa.int64()), pa.field("source_invalid_values", pa.string()),
         pa.field("source_usable", pa.bool_()),
@@ -370,6 +395,9 @@ def build_tabular_parquet(path: Path, output_path: Path, manifest_path: Path, da
             mapping = resolve_fields(columns)
             mappings[sheet] = {"mapping": mapping, "columns": columns, **options}
             normalized, issues = normalize_frame(frame, mapping, source_timezone)
+            identity = vessel_identity_fields(columns)
+            for field in VESSEL_IDENTITY_ALIASES:
+                normalized[field] = vessel_identity_values(frame[identity[field]], field) if field in identity else None
             invalid.update(issues)
             usable, field_counts, raw_issues = check_field_values(frame, normalized, mapping)
             usable_rows += int(usable.sum())

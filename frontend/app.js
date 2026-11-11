@@ -34,9 +34,7 @@ let timeChart = null;
 let lengthChart = null;
 let courseDirectionChart = null;
 let headingDirectionChart = null;
-let directionTimeChart = null;
 let directionRequestId = 0;
-let directionTimeRequestId = 0;
 
 function shipTypeName(code) {
   const n = Number(code);
@@ -212,10 +210,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       loadDirectionHistograms();
     });
   });
-  $("applyDirectionMmsiBtn").addEventListener("click", applyDirectionVessel);
-  $("directionMmsiInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") applyDirectionVessel();
-  });
+  initVesselHistory();
   $("mapFullscreenBtn").addEventListener("click", toggleMapFullscreen);
   $("fitMapBtn").addEventListener("click", fitMapToData);
   $("reloadTracksBtn").addEventListener("click", refreshTrackTiles);
@@ -419,7 +414,7 @@ async function pollStatus() {
     updateSpatialExportButton();
     updateBehaviorExportButton();
     ["runCleanBtn", "resetCleanBtn", "reportExcelBtn", "refreshBtn", "reportRefreshBtn", "applyBtn", "clearBtn",
-      "applyDirectionMmsiBtn", "fitMapBtn", "reloadTracksBtn", "grainSelect", "speedBinWidthSelect", "lengthBinWidthSelect",
+      "vesselMmsi", "vesselSearchBtn", "fitMapBtn", "reloadTracksBtn", "grainSelect", "speedBinWidthSelect", "lengthBinWidthSelect",
       "directionBinWidthSelect", "headingBinWidthSelect"].forEach(id => { $(id).disabled = !data.dataset_ready; });
     const job = !data.build_job?.dataset_id || data.build_job.dataset_id === data.active_dataset_id
       ? data.build_job || {} : {};
@@ -437,6 +432,7 @@ async function pollStatus() {
       const activeKey = `${data.active_dataset_id || ""}:${activeManifest.data_role || "source"}:${activeManifest.created_at || ""}:${activeManifest.row_count || 0}`;
       const activeWasUnset = !state.activeKey;
       const activeChanged = state.activeKey && state.activeKey !== activeKey;
+      if (activeChanged) resetVesselHistory();
       state.activeKey = activeKey;
       state.activeDatasetId = data.active_dataset_id || "";
       state.manifest = activeManifest;
@@ -600,7 +596,6 @@ async function loadAll() {
     loadTimeSeries(),
     loadLengthHistogram(),
     loadDirectionHistograms(),
-    loadDirectionTimeSeries(),
   ]);
 }
 
@@ -610,6 +605,7 @@ function clearDatasetResults() {
   [speedChart, shipChart, timeChart, lengthChart].forEach((chart) => chart?.destroy());
   speedChart = shipChart = timeChart = lengthChart = null;
   clearDirectionCharts();
+  resetVesselHistory();
   const map = state.map;
   clearDensityData();
   resetTrackInspection();
@@ -737,15 +733,12 @@ function isWideOverviewMetric(label) {
 
 function clearDirectionCharts() {
   directionRequestId += 1;
-  directionTimeRequestId += 1;
-  [courseDirectionChart, headingDirectionChart, directionTimeChart].forEach((chart) => chart?.destroy());
-  courseDirectionChart = headingDirectionChart = directionTimeChart = null;
+  [courseDirectionChart, headingDirectionChart].forEach((chart) => chart?.destroy());
+  courseDirectionChart = headingDirectionChart = null;
   $("courseDirectionStats").innerHTML = "";
   $("headingDirectionStats").innerHTML = "";
   $("courseDirectionStatus").textContent = "等待加载数据";
   $("headingDirectionStatus").textContent = "等待加载数据";
-  $("directionTimeStatus").textContent = "输入船舶编号后查看双曲线，并与当前时间、水域筛选联动。";
-  $("directionMmsiInput").value = "";
 }
 
 function dominantDirectionLabel(item) {
@@ -813,76 +806,6 @@ async function loadDirectionHistograms() {
     $("courseDirectionStats").innerHTML = $("headingDirectionStats").innerHTML = "";
     $("courseDirectionStatus").textContent = $("headingDirectionStatus").textContent = "航向统计加载失败，请刷新统计后重试。";
     console.error("Direction histograms", error);
-  }
-}
-
-function applyDirectionVessel() {
-  const mmsi = $("directionMmsiInput").value.trim();
-  if (!/^\d{9}$/.test(mmsi)) {
-    $("directionTimeStatus").textContent = "请输入 9 位船舶编号（MMSI）。";
-    return;
-  }
-  $("mmsiFilterInput").value = mmsi;
-  state.filters = collectFilters();
-  loadAll();
-  refreshTrackTiles();
-}
-
-function directionLineData(points, field) {
-  const data = [];
-  for (const point of points) {
-    const x = point.timestamp * 1000;
-    if (data.length && point[`${field}_break`]) data.push({ x, y: null });
-    data.push({ x, y: point[field] ?? null });
-  }
-  return data;
-}
-
-async function loadDirectionTimeSeries() {
-  const requestId = ++directionTimeRequestId;
-  const activeKey = state.activeKey;
-  directionTimeChart?.destroy();
-  directionTimeChart = null;
-  $("directionMmsiInput").value = state.filters.mmsi ? String(state.filters.mmsi) : "";
-  if (!state.filters.mmsi) {
-    $("directionTimeStatus").textContent = "输入船舶编号后查看双曲线，并与当前时间、水域筛选联动。";
-    return;
-  }
-  $("directionTimeStatus").textContent = "正在加载单船航向曲线…";
-  try {
-    const data = await api(`/api/direction-time-series${queryString()}`);
-    if (requestId !== directionTimeRequestId || activeKey !== state.activeKey) return;
-    if (!data.points.length) {
-      $("directionTimeStatus").textContent = "该船舶在当前时间、水域及筛选条件下没有可展示的 AIS 点。";
-      return;
-    }
-    $("directionTimeStatus").textContent = `MMSI ${data.mmsi} · 展示 ${numberFormat.format(data.displayed_points)} / ${numberFormat.format(data.total_points)} 点`
-      + (data.sampled ? "；曲线已限量展示，分布统计与导出仍使用全部筛选点。" : "。")
-      + (!data.heading_available ? "当前数据未提供船首向，仅显示对地航向。" : "");
-    directionTimeChart = new Chart($("directionTimeCanvas"), {
-      type: "line",
-      data: { datasets: [
-        { label: "对地航向（COG）", data: directionLineData(data.points, "course"), borderColor: "#ea580c", backgroundColor: "#ea580c" },
-        { label: "船首向（heading）", data: directionLineData(data.points, "heading"), borderColor: "#7c3aed", backgroundColor: "#7c3aed" },
-      ] },
-      options: {
-        responsive: true, maintainAspectRatio: false, parsing: false, spanGaps: false,
-        elements: { line: { tension: 0, borderWidth: 1.8 }, point: { radius: data.points.length > 1000 ? 0 : 2, hoverRadius: 4 } },
-        interaction: { mode: "nearest", axis: "x", intersect: false },
-        plugins: { tooltip: { callbacks: {
-          title: (items) => formatTime(items[0].parsed.x / 1000),
-          label: (context) => `${context.dataset.label}：${formatNumber(context.parsed.y, 1)}°`,
-        } } },
-        scales: {
-          x: { type: "linear", title: { display: true, text: "时间" }, ticks: { maxTicksLimit: 8, callback: (value) => new Date(Number(value)).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) } },
-          y: { min: 0, max: 360, title: { display: true, text: "方向（°）" }, ticks: { stepSize: 90, callback: (value) => `${value}°` } },
-        },
-      },
-    });
-  } catch (error) {
-    if (requestId !== directionTimeRequestId || activeKey !== state.activeKey) return;
-    $("directionTimeStatus").textContent = "航向时间曲线加载失败，请重新选择船舶后重试。";
-    console.error("Direction time series", error);
   }
 }
 
@@ -1248,6 +1171,7 @@ function initMap() {
     initMarkerLayers();
     initDensityLayers();
     initTrackInspection();
+    initVesselHistoryLayers();
     renderMarkers();
     refreshTrackTiles();
     fitMapToDataOnce();
@@ -2022,6 +1946,7 @@ function refreshTrackTiles() {
     if (map.getLayer(id)) map.moveLayer(id);
   });
   TRACK_INSPECTION_LAYERS.forEach((id) => map.moveLayer(id, "marker-region-fill"));
+  raiseVesselHistoryLayers();
   updateDensityStyle();
   refreshDensityLayer();
   scheduleTrackInspection();

@@ -55,7 +55,7 @@ from backend.app.services.dataset import (
     unregister_dataset,
 )
 from backend.app.services.exporter import export_excel, export_points_excel, export_rejected_csv
-from backend.app.services.ingestion import SOURCE_COLUMNS, TABULAR_SUFFIXES
+from backend.app.services.ingestion import SOURCE_COLUMNS, TABULAR_SUFFIXES, VESSEL_IDENTITY_ALIASES
 from backend.app.services.directions import direction_histograms, direction_time_series, validate_direction_bin_width
 from backend.app.services.density import DensityGridTooLarge, density_features
 from backend.app.services.plots import density_png
@@ -68,6 +68,7 @@ from backend.app.services.query import (
     points_sql,
     trajectory_source,
 )
+from backend.app.services.vessel_history import VesselPeriod, vessel_history, vessel_period_source, vessel_profile
 from backend.app.services.track_inspection import (
     TrackAnchor, selected_track_annotations, selected_track_details, selected_track_source, viewport_track_points,
 )
@@ -636,6 +637,27 @@ def api_track_inspection_annotations(
     return _call(selected_track_annotations, filters, anchor, bounds)
 
 
+def parse_vessel_period(
+    data_version: str,
+    mmsi: int = Query(ge=100_000_000, le=999_999_999),
+    start_ts: int = Query(gt=0),
+    end_ts: int = Query(gt=0),
+) -> VesselPeriod:
+    if start_ts > end_ts:
+        raise HTTPException(422, "开始时间不能晚于结束时间。")
+    return VesselPeriod(mmsi, start_ts, end_ts, data_version)
+
+
+@app.get("/api/vessels/profile")
+def api_vessel_profile(data_version: str, mmsi: int = Query(ge=100_000_000, le=999_999_999)) -> dict:
+    return {"vessel": _call(vessel_profile, mmsi, data_version)}
+
+
+@app.get("/api/vessels/history")
+def api_vessel_history(period: VesselPeriod = Depends(parse_vessel_period)) -> dict:
+    return _call(vessel_history, period)
+
+
 @app.get("/api/track/{mmsi}")
 def api_track(mmsi: int, max_points: int = 50000) -> dict[str, object]:
     return _call(track_points, mmsi=mmsi, max_points=max_points)
@@ -703,8 +725,14 @@ def api_export_selected_track(
     return _export_points(kind="selected_track", filters=filters, anchor=anchor)
 
 
+@app.get("/api/export/vessel-history")
+def api_export_vessel_history(period: VesselPeriod = Depends(parse_vessel_period)) -> FileResponse:
+    return _export_points(kind="vessel_history", period=period)
+
+
 def _export_points(
     *, kind: str, filters: QueryFilters | None = None, anchor: TrackAnchor | None = None,
+    period: VesselPeriod | None = None,
 ) -> FileResponse:
     with connect() as con:
         # Materialize the query before a build, reset or removal can replace the Parquet.
@@ -721,13 +749,15 @@ def _export_points(
                 if not con.execute("SELECT 1 FROM picked_track LIMIT 1").fetchone():
                     raise HTTPException(404, "找不到所选轨迹，请重新点选。")
                 source, params = "picked_track", []
+            elif period is not None:
+                source, params, _ = _call(vessel_period_source, period)
             else:
                 if not dataset_ready():
                     raise HTTPException(409, "请先选择并加载数据。")
                 query_source = trajectory_source if kind in {"section_tracks", "behavior_tracks"} else analysis_source
                 source, params = query_source(filters)
             fields = {column[0] for column in _call(con.execute, f"DESCRIBE SELECT * FROM {source}", params).fetchall()}
-            internal = [column for column in SOURCE_COLUMNS if column in fields]
+            internal = [column for column in (*SOURCE_COLUMNS, *VESSEL_IDENTITY_ALIASES) if column in fields]
             projection = f"* EXCLUDE ({', '.join(internal)})" if internal else "*"
             _call(con.execute, f"SELECT {projection} FROM {source} ORDER BY mmsi, timestamp, trajectory_id, lon, lat", params)
         path = _call(export_points_excel, con, kind=kind)

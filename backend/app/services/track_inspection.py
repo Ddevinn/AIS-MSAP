@@ -193,24 +193,26 @@ def selected_track_annotations(
                        row_number() OVER segment_order AS point_index, count(*) OVER () AS total,
                        lag(timestamp) OVER segment_order AS prev_time,
                        lag(speed::DOUBLE) OVER segment_order AS prev_speed,
+                       lead(timestamp) OVER segment_order AS next_time,
+                       lead(speed::DOUBLE) OVER segment_order AS next_speed,
                        lag(lon::DOUBLE) OVER segment_order AS prev_lon,
                        lag(lat::DOUBLE) OVER segment_order AS prev_lat
                 FROM {source}
                 WINDOW segment_order AS (ORDER BY {TRACK_POINT_ORDER})
             ), changes AS (
-                SELECT *, timestamp - prev_time AS elapsed, speed - prev_speed AS speed_change
+                SELECT *, next_time - timestamp AS elapsed, next_speed - speed AS speed_change,
+                       isfinite(speed) AND speed >= 0 AND isfinite(next_speed) AND next_speed >= 0
+                           AND next_time - timestamp BETWEEN 1 AND 600 AS valid_change
                 FROM ordered
             )
             SELECT point_index, lon, lat, timestamp, prev_lon, prev_lat,
                    CASE WHEN total = 1 THEN 'both'
                         WHEN point_index = 1 THEN 'start' WHEN point_index = total THEN 'end' END,
                    CASE
-                       WHEN elapsed NOT BETWEEN 1 AND 600
-                         OR NOT coalesce(isfinite(speed) AND speed >= 0 AND isfinite(prev_speed) AND prev_speed >= 0, false)
-                         THEN NULL
-                       WHEN speed <= 0.5 AND prev_speed <= 0.5 THEN 'stop'
-                       WHEN speed_change >= 1 AND speed_change * 60 >= elapsed * 0.5 THEN 'accelerate'
-                       WHEN speed_change <= -1 AND -speed_change * 60 >= elapsed * 0.5 THEN 'decelerate'
+                       WHEN valid_change AND speed_change >= 1 AND speed_change * 60 >= elapsed * 0.5 THEN 'accelerate'
+                       WHEN valid_change AND speed_change <= -1 AND -speed_change * 60 >= elapsed * 0.5 THEN 'decelerate'
+                       WHEN timestamp - prev_time BETWEEN 1 AND 600
+                         AND speed BETWEEN 0 AND 0.5 AND prev_speed BETWEEN 0 AND 0.5 THEN 'stop'
                    END
             FROM changes {view} {where}
             ORDER BY point_index
