@@ -1231,10 +1231,11 @@ function initMap() {
     zoom: 10,
     minZoom: 7,
     maxZoom: 17,
+    attributionControl: { compact: false },
   });
   const basemap = window.AISBasemap.attach(state.map);
   state.map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left");
-  state.map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
+  state.map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
   // Fullscreen and wrapping controls can resize the container without a window resize.
   const resizeObserver = new ResizeObserver(() => state.map?.resize());
   resizeObserver.observe($("map"));

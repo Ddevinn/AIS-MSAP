@@ -1,6 +1,6 @@
 const trackInspector = {
   points: [], timer: null, viewportRequest: null, selectionRequest: null,
-  frame: null, hoverKey: null, hoverPopup: null, marker: null, selectedPopup: null, selectionKey: null,
+  frame: null, hoverKey: null, hoverPopup: null, marker: null, selectedPopup: null, selection: null,
 };
 const TRACK_INSPECTION_ZOOM = 11;
 const TRACK_MARKER_LAYERS = ["marker-point", "marker-route-line", "marker-section-line", "marker-region-line"];
@@ -54,11 +54,15 @@ function initTrackInspection() {
     if (trackInspector.frame !== null) cancelAnimationFrame(trackInspector.frame);
     trackInspector.frame = requestAnimationFrame(() => {
       trackInspector.frame = null;
-      const target = canInspectTracks() ? nearestTrackPoint(event.point) : null;
-      showTrackPoint(target && !overTrackMarker(event.point) ? target : null);
+      const { point, hit } = trackTargetAt(event.point);
+      map.getCanvas().classList.toggle("is-track-target", hit);
+      showTrackPoint(point);
     });
   });
-  map.getCanvas().addEventListener("mouseleave", clearTrackHover);
+  map.getCanvas().addEventListener("mouseleave", () => {
+    map.getCanvas().classList.remove("is-track-target");
+    clearTrackHover();
+  });
   map.on("click", inspectTrackSelection);
   initTrackAnnotations(map);
 }
@@ -89,17 +93,23 @@ function clearTrackCandidates() {
   trackInspector.viewportRequest = null;
   trackInspector.points = [];
   state.map?.getSource("ais-inspect-points")?.setData(trackFeatures());
+  state.map?.getCanvas().classList.remove("is-track-target");
   clearTrackHover();
+}
+
+function closeTrackSelectionPopup() {
+  const popup = trackInspector.selectedPopup;
+  trackInspector.selectedPopup = null;
+  popup?.remove();
+  queueTrackAnnotationDraw();
 }
 
 function clearTrackSelection() {
   clearTrackAnnotations();
   trackInspector.selectionRequest?.abort();
   trackInspector.selectionRequest = null;
-  const popup = trackInspector.selectedPopup;
-  trackInspector.selectedPopup = null;
-  trackInspector.selectionKey = null;
-  popup?.remove();
+  trackInspector.selection = null;
+  closeTrackSelectionPopup();
   state.map?.getSource("ais-picked-track")?.setData(trackFeatures());
 }
 
@@ -183,6 +193,19 @@ function overTrackMarker(pixel) {
   return layers.length > 0 && state.map.queryRenderedFeatures(pixel, { layers }).length > 0;
 }
 
+function hitsSelectedTrack(pixel) {
+  if (!trackInspector.selection) return false;
+  const bounds = [[pixel.x - 4, pixel.y - 4], [pixel.x + 4, pixel.y + 4]];
+  return state.map.queryRenderedFeatures(bounds, { layers: ["ais-picked-outline", "ais-picked-point"] }).length > 0;
+}
+
+function trackTargetAt(pixel) {
+  if (state.drawing || state.measuring || overTrackMarker(pixel)) return { point: null, hit: false };
+  if (!canInspectTracks()) return { point: null, hit: hitsSelectedTrack(pixel) };
+  const point = nearestTrackPoint(pixel);
+  return { point, hit: Boolean(point || nearestTrackLine(pixel) || hitsSelectedTrack(pixel)) };
+}
+
 function nearestTrackPoint(pixel) {
   let result = null;
   let distance = 10 ** 2;
@@ -257,7 +280,7 @@ function trackPointKey(point) {
 
 function showTrackPoint(point) {
   const key = point ? trackPointKey(point) : null;
-  if (key === trackInspector.selectionKey) point = null;
+  if (trackInspector.selectedPopup && key === trackInspector.selection?.key) point = null;
   if (point && key === trackInspector.hoverKey) return;
   clearTrackHover();
   if (!point) return;
@@ -282,15 +305,57 @@ function showTrackPoint(point) {
   }).setLngLat(point.coordinate).setDOMContent(card).addTo(state.map);
 }
 
+function openTrackSelectionPopup(coordinate) {
+  const { detail, params } = trackInspector.selection;
+  closeTrackSelectionPopup();
+  const card = trackCard("已选轨迹段", detail.mmsi, [
+    ["船长", trackNumber(detail.length, " m")],
+    ["船宽", trackNumber(detail.width, " m")],
+    ["轨迹点数", trackNumber(detail.point_count, " 个", 0)],
+    ["平均航速", trackNumber(detail.speed_avg, " kn")],
+  ]);
+  const download = document.createElement("a");
+  download.className = "btn dark full track-export-link";
+  download.textContent = "导出该轨迹数据";
+  download.href = "/api/export/selected-track" + params;
+  card.append(download);
+  const popup = new maplibregl.Popup({
+    className: "track-inspection-popup track-selection-popup",
+    closeOnClick: false, focusAfterOpen: false, maxWidth: "300px", offset: 14,
+  }).setLngLat(coordinate).setDOMContent(card).addTo(state.map);
+  trackInspector.selectedPopup = popup;
+  popup.on("close", () => {
+    if (trackInspector.selectedPopup !== popup) return;
+    trackInspector.selectedPopup = null;
+    queueTrackAnnotationDraw();
+  });
+  queueTrackAnnotationDraw();
+}
+
 async function inspectTrackSelection(event) {
-  if (!canInspectTracks() || overTrackMarker(event.point)) return;
-  const hitPoint = nearestTrackPoint(event.point);
-  const point = hitPoint || nearestTrackLine(event.point);
-  clearTrackSelection();
-  if (!point) return;
+  if (state.drawing || state.measuring) return;
+  if (overTrackMarker(event.point)) {
+    clearTrackSelection();
+    return;
+  }
+  const hitPoint = canInspectTracks() ? nearestTrackPoint(event.point) : null;
+  const existing = trackInspector.selection;
+  if ((hitPoint && trackPointKey(hitPoint) === existing?.key) || hitsSelectedTrack(event.point)) {
+    trackInspector.selectionRequest?.abort();
+    trackInspector.selectionRequest = null;
+    clearTrackHover();
+    removeDensityPopup();
+    openTrackSelectionPopup(hitPoint?.coordinate ?? event.lngLat);
+    return;
+  }
+  const point = hitPoint || (canInspectTracks() ? nearestTrackLine(event.point) : null);
+  if (!point) {
+    clearTrackSelection();
+    return;
+  }
   clearTrackHover();
-  trackInspector.selectionKey = trackPointKey(point);
   removeDensityPopup();
+  trackInspector.selectionRequest?.abort();
   const controller = new AbortController();
   trackInspector.selectionRequest = controller;
   const params = queryString({
@@ -301,33 +366,15 @@ async function inspectTrackSelection(event) {
   try {
     const detail = await trackInspectionJson("/api/track-inspection/segment", params, controller.signal);
     if (trackInspector.selectionRequest !== controller || controller.signal.aborted) return;
-    const map = state.map;
     const distinct = detail.path.some(([lon, lat]) => lon !== detail.path[0][0] || lat !== detail.path[0][1]);
     const feature = distinct ? trackFeature("LineString", detail.path) : trackFeature("Point", detail.path[0]);
-    map.getSource("ais-picked-track").setData(trackFeatures([feature]));
-    const card = trackCard("已选轨迹段", detail.mmsi, [
-      ["船长", trackNumber(detail.length, " m")],
-      ["船宽", trackNumber(detail.width, " m")],
-      ["轨迹点数", trackNumber(detail.point_count, " 个", 0)],
-      ["平均航速", trackNumber(detail.speed_avg, " kn")],
-    ]);
-    const download = document.createElement("a");
-    download.className = "btn dark full track-export-link";
-    download.textContent = "导出该轨迹数据";
-    download.href = "/api/export/selected-track" + params;
-    card.append(download);
-    const popup = new maplibregl.Popup({
-      className: "track-inspection-popup track-selection-popup",
-      closeOnClick: false, focusAfterOpen: false, maxWidth: "300px", offset: 14,
-    }).setLngLat(hitPoint ? point.coordinate : event.lngLat).setDOMContent(card).addTo(map);
-    trackInspector.selectedPopup = popup;
+    state.map.getSource("ais-picked-track").setData(trackFeatures([feature]));
+    trackInspector.selection = { key: trackPointKey(point), params, detail };
+    clearTrackAnnotations();
+    openTrackSelectionPopup(hitPoint ? point.coordinate : event.lngLat);
     showTrackAnnotations(params, detail.annotation_viewport);
-    popup.on("close", () => {
-      if (trackInspector.selectedPopup === popup) clearTrackSelection();
-    });
   } catch (error) {
     if (error.name !== "AbortError" && trackInspector.selectionRequest === controller) {
-      trackInspector.selectionKey = null;
       setTrackInspectionHint(error.message);
     }
   } finally {

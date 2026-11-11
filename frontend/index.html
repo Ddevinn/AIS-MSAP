@@ -6,7 +6,7 @@
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=20261110-track-annotations-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20261110-track-controls-1" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
@@ -347,6 +347,7 @@
                   <p class="density-method">热力显示相对热点；网格按 AIS 点数着色，点击可查看点数与船舶数。点数受 AIS 发送频率影响，不等同于船舶数量。</p>
                   <p id="densityPanelStatus" class="density-panel-status" role="status">等待加载数据</p>
                   <button id="retryDensityBtn" class="btn ghost full" type="button"><svg class="ui-icon" aria-hidden="true"><use href="#i-refresh" /></svg>重新计算密度</button>
+                  <button id="exportDensityGridBtn" class="btn ghost full" type="button" disabled><svg class="ui-icon" aria-hidden="true"><use href="#i-download" /></svg>导出当前计数网格</button>
                 </section>
 
                 <section class="tool-section marker-library" hidden>
@@ -408,10 +409,22 @@
     <script src="/static/vendor/chart.umd.min.js"></script>
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=20261014-1"></script>
-    <script src="/static/app.js?v=20261110-track-inspection-1"></script>
-    <script src="/static/density.js?v=20261109-detail-1"></script>
-    <script src="/static/track-inspection.js?v=20261110-annotations-1"></script>
+    <script src="/static/app.js?v=20261110-track-controls-1"></script>
+    <script src="/static/density.js?v=20261110-fixed-grid-size-1"></script>
+    <script src="/static/track-inspection.js?v=20261110-track-controls-1"></script>
     <script src="/static/track-annotations.js?v=20261110-1"></script>
+    <dialog id="densityGridExportDialog" class="quality-dialog" aria-labelledby="densityGridExportTitle">
+      <form method="dialog">
+        <h2 id="densityGridExportTitle">导出当前计数网格</h2>
+        <p id="densityGridExportSummary"></p>
+        <p>请选择文件格式。GeoJSON 保留方格形状，CSV 提供表格及边界坐标。</p>
+        <div class="quality-dialog-actions">
+          <button class="btn ghost" type="submit" value="cancel" autofocus>取消</button>
+          <button class="btn ghost" type="submit" value="csv">CSV</button>
+          <button class="btn dark" type="submit" value="geojson">GeoJSON</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="buildQualityDialog" class="quality-dialog" aria-labelledby="buildQualityTitle">
       <h2 id="buildQualityTitle">发现字段质量问题</h2>
       <p>请核对以下字段及对分析的影响。</p>

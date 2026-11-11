@@ -7,6 +7,19 @@ const emptyDensity = () => ({ type: "FeatureCollection", features: [] });
 
 window.addEventListener("DOMContentLoaded", () => {
   $("toggleDensityPanelBtn").addEventListener("click", () => toggleMapTool("density"));
+  $("exportDensityGridBtn").addEventListener("click", () => {
+    const data = densityExportData();
+    if (!data) return;
+    const { cell_size_m, point_count } = data.metadata;
+    $("densityGridExportSummary").textContent =
+      `${numberFormat.format(data.features.length)} 个非空网格 · ${numberFormat.format(point_count)} 个 AIS 点 · 实际精度约 ${densitySizeLabel(cell_size_m)}`;
+    $("densityGridExportDialog").showModal();
+  });
+  $("densityGridExportDialog").querySelector("form").addEventListener("submit", (event) => {
+    const format = event.submitter?.value;
+    const data = densityExportData();
+    if (data && (format === "geojson" || format === "csv")) downloadDensityGrid(data, format);
+  });
   $("densityToggleBtn").addEventListener("click", () => {
     densityState.enabled = !densityState.enabled;
     if (!densityState.enabled) cancelDensityRequest();
@@ -128,6 +141,7 @@ function updateDensityStyle() {
     }
   }
   $("densityLegend").hidden = !densityState.enabled || !state.manifest;
+  updateDensityExportButton();
   if (!densityState.enabled) removeDensityPopup();
 }
 
@@ -149,6 +163,7 @@ function clearDensityData() {
   $("densityLegendBody").hidden = true;
   $("densityPanelStatus").textContent = "等待加载数据";
   $("densityPeakCount").textContent = $("densityActualSize").textContent = "—";
+  updateDensityExportButton();
 }
 
 function densitySizeLabel(meters) {
@@ -156,6 +171,7 @@ function densitySizeLabel(meters) {
 }
 
 function renderDensityLegend() {
+  updateDensityExportButton();
   const meta = densityState.data?.metadata;
   const grid = densityState.mode === "grid";
   $("densityModeBadge").textContent = grid ? "网格" : "热力";
@@ -184,10 +200,60 @@ function renderDensityLegend() {
   $("densityPanelStatus").textContent = meta.cell_count ? `已统计 ${numberFormat.format(meta.point_count)} 个 AIS 点。${note}` : "当前筛选无数据，可调整筛选条件。";
 }
 
+function densityGridUrl() {
+  return `/api/density-grid${queryString({ cell_size_m: densityState.cellSize,
+    behavior: state.behaviorFilter, data_version: state.activeKey })}`;
+}
+
+function densityExportData() {
+  if (!densityState.enabled || !state.manifest || !densityState.data?.features.length) return null;
+  return densityState.dataKey === densityGridUrl() ? densityState.data : null;
+}
+
+function updateDensityExportButton() {
+  const ready = Boolean(densityExportData());
+  $("exportDensityGridBtn").disabled = !ready;
+  const dialog = $("densityGridExportDialog");
+  if (!ready && dialog.open) dialog.close();
+}
+
+function downloadDensityGrid(data, format) {
+  const { metadata } = data;
+  const features = data.features.map((feature) => {
+    const [[west, south], [east], [, north]] = feature.geometry.coordinates[0];
+    return {
+      ...feature,
+      properties: {
+        grid_id: feature.id,
+        ...feature.properties,
+        west, south, east, north,
+        requested_cell_size_m: metadata.requested_cell_size_m,
+        cell_size_m: metadata.cell_size_m,
+      },
+    };
+  });
+  let blob;
+  if (format === "geojson") {
+    blob = new Blob([JSON.stringify({ ...data, features })], { type: "application/geo+json;charset=utf-8" });
+  } else {
+    const records = features.map((feature) => feature.properties);
+    // Grid IDs, counts and coordinates contain no CSV delimiters.
+    const rows = [Object.keys(records[0]), ...records.map((record) => Object.values(record))];
+    blob = new Blob(["\ufeff", rows.map((row) => row.join(",")).join("\r\n") + "\r\n"], { type: "text/csv;charset=utf-8" });
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `ais_count_grid_${metadata.cell_size_m}m.${format}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 async function refreshDensityLayer(force = false) {
   if (!state.mapLoaded || !state.manifest || !densityState.enabled) return;
-  const url = `/api/density-grid${queryString({ cell_size_m: densityState.cellSize,
-    behavior: state.behaviorFilter, data_version: state.activeKey })}`;
+  const url = densityGridUrl();
   if (!force && densityState.dataKey === url && densityState.data) {
     renderDensityLegend();
     return;
@@ -209,9 +275,14 @@ async function refreshDensityLayer(force = false) {
   $("densityLegendStatus").textContent = $("densityPanelStatus").textContent = "正在计算空间密度…";
   $("densityPeakCount").textContent = $("densityActualSize").textContent = "—";
   renderDensityLegend();
+  let failureMessage = "密度加载失败，请点击“重新计算密度”重试。";
   try {
     const response = await (window.AIS ? window.AIS.request(url, { signal: controller.signal }) : fetch(url, { signal: controller.signal }));
-    if (!response.ok) throw new Error(`密度请求失败 (${response.status})`);
+    if (!response.ok) {
+      const error = response.status === 422 ? await response.json().catch(() => ({})) : {};
+      if (typeof error.detail === "string") failureMessage = error.detail;
+      throw new Error(failureMessage);
+    }
     const data = await response.json();
     if (requestId !== densityState.requestId || datasetKey !== state.activeKey || !densityState.enabled) return;
     const maximum = Math.max(1, data.metadata.max_count);
@@ -230,7 +301,7 @@ async function refreshDensityLayer(force = false) {
     renderDensityLegend();
   } catch (error) {
     if (error.name === "AbortError" || requestId !== densityState.requestId) return;
-    $("densityLegendStatus").textContent = $("densityPanelStatus").textContent = "密度加载失败，请点击“重新计算密度”重试。";
+    $("densityLegendStatus").textContent = $("densityPanelStatus").textContent = failureMessage;
   } finally {
     if (requestId === densityState.requestId) {
       densityState.controller = null;

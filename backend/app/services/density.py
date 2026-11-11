@@ -12,7 +12,11 @@ from backend.app.services.query import (
 
 EARTH_RADIUS = 6_378_137.0
 MAX_LATITUDE = 85.05112878
-MAX_CELLS = 20_000
+MAX_CELLS = 60_000
+
+
+class DensityGridTooLarge(ValueError):
+    pass
 
 
 def density_features(cell_size_m: int = 250, filters: QueryFilters | None = None) -> dict[str, Any]:
@@ -50,22 +54,21 @@ def density_features(cell_size_m: int = 250, filters: QueryFilters | None = None
             FROM valid
         )
     """
-    actual_size = cell_size_m
+    projected_size = cell_size_m / scale
     with connect() as con:
-        # Coarsen the whole grid if necessary instead of dropping less busy cells.
-        while True:
-            projected_size = actual_size / scale
-            rows = con.execute(projected + f"""
-                SELECT floor(px / {projected_size})::BIGINT AS x,
-                       floor(py / {projected_size})::BIGINT AS y,
-                       count(*)::BIGINT AS point_count,
-                       count(DISTINCT mmsi)::BIGINT AS vessel_count
-                FROM projected
-                GROUP BY x, y ORDER BY x, y LIMIT {MAX_CELLS + 1}
-            """, params).fetchall()
-            if len(rows) <= MAX_CELLS:
-                break
-            actual_size *= 2
+        rows = con.execute(projected + f"""
+            SELECT floor(px / {projected_size})::BIGINT AS x,
+                   floor(py / {projected_size})::BIGINT AS y,
+                   count(*)::BIGINT AS point_count,
+                   count(DISTINCT mmsi)::BIGINT AS vessel_count
+            FROM projected
+            GROUP BY x, y ORDER BY x, y LIMIT {MAX_CELLS + 1}
+        """, params).fetchall()
+    if len(rows) > MAX_CELLS:
+        raise DensityGridTooLarge(
+            f"约 {cell_size_m:,} 米的网格超过 {MAX_CELLS:,} 个非空格。"
+            "请缩小筛选范围，或手动选择较大的网格尺寸。"
+        )
 
     def longitude(x: float) -> float:
         return max(-180.0, min(180.0, math.degrees(x / EARTH_RADIUS)))
@@ -92,8 +95,8 @@ def density_features(cell_size_m: int = 250, filters: QueryFilters | None = None
         "metadata": {
             "point_count": sum(int(row[2]) for row in rows),
             "cell_count": len(rows), "max_count": max((int(row[2]) for row in rows), default=0),
-            "requested_cell_size_m": cell_size_m, "cell_size_m": actual_size,
-            "coarsened": actual_size != cell_size_m,
+            "requested_cell_size_m": cell_size_m, "cell_size_m": cell_size_m,
+            "coarsened": False,
             "reference_latitude": reference_latitude,
             "spatial_scope": "selected_tracks" if filters and filters.spatial_mode == "section" else "points",
             "behavior": filters.behavior if filters else None,

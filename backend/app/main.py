@@ -57,7 +57,7 @@ from backend.app.services.dataset import (
 from backend.app.services.exporter import export_excel, export_points_excel, export_rejected_csv
 from backend.app.services.ingestion import SOURCE_COLUMNS, TABULAR_SUFFIXES
 from backend.app.services.directions import direction_histograms, direction_time_series, validate_direction_bin_width
-from backend.app.services.density import density_features
+from backend.app.services.density import DensityGridTooLarge, density_features
 from backend.app.services.plots import density_png
 from backend.app.services.query import (
     QueryFilters,
@@ -541,7 +541,14 @@ def api_density_grid(
     cell_size_m: int = Query(default=250, ge=50, le=20000),
     filters: QueryFilters = Depends(parse_filters),
 ) -> dict[str, object]:
-    return _call(density_features, cell_size_m=cell_size_m, filters=filters)
+    try:
+        return density_features(cell_size_m=cell_size_m, filters=filters)
+    except DensityGridTooLarge as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/density.png")

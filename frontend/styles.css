@@ -294,6 +294,7 @@ input[type="range"] { height: auto; padding: 0; border: 0; box-shadow: none; acc
 .map-workspace { position: relative; min-height: 760px; }
 .map-pane { position: relative; min-width: 0; min-height: 760px; display: flex; flex-direction: column; }
 .map-stage { position: relative; flex: 1; min-height: 720px; overflow: hidden; border: 1px solid #c8d6e5; border-radius: 14px; background: #dce8ef; box-shadow: inset 0 0 0 1px rgba(255,255,255,.55), 0 10px 30px rgba(30,58,90,.08); }
+.map-stage .maplibregl-canvas.is-track-target { cursor: default; }
 .map-stage .maplibregl-canvas.is-marking { cursor: crosshair; }
 .map-stage .maplibregl-canvas.is-measuring { cursor: crosshair; }
 .map-coordinates { position: absolute; z-index: 3; left: 12px; bottom: 66px; padding: 6px 9px; appearance: none; cursor: pointer; white-space: nowrap; border: 1px solid rgba(203,215,227,.9); border-radius: 8px; color: #31455d; background: rgba(255,255,255,.9); box-shadow: var(--shadow-sm); font: inherit; font-size: 10px; font-variant-numeric: tabular-nums; backdrop-filter: blur(8px); transition: background .16s ease, border-color .16s ease, transform .16s ease; }
