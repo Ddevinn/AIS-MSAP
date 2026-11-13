@@ -24,7 +24,7 @@ from backend.app.services.analysis import (
     summary,
     time_series,
 )
-from backend.app.services.query import QueryFilters, connect, points_sql
+from backend.app.services.query import BEHAVIOR_LABELS, QueryFilters, connect, points_sql
 from backend.app.services.directions import direction_histograms
 
 _HEADER_FILL = PatternFill("solid", fgColor="1E3A5F")
@@ -178,7 +178,18 @@ def export_points_excel(result: DuckDBPyConnection, *, kind: str) -> Path:
     return path
 
 
-def export_excel(filters: QueryFilters | None = None, direction_bin_width: int = 15) -> Path:
+def export_excel(
+    filters: QueryFilters | None = None, direction_bin_width: int = 15, *,
+    speed_bin_width: float = 1.0, length_bin_width: float = 10.0, grain: str = "day",
+) -> Path:
+    """Export the dashboard's aggregate statistics for the applied filters."""
+    overall = summary(filters)
+    section = overall["spatial_mode"] == "section"
+    count_label = "穿越次数" if section else "轨迹点数"
+    bucket_label = {
+        "15min": "15 分钟", "30min": "30 分钟", "hour": "按小时",
+        "2hour": "2 小时", "day": "按日", "month": "按月",
+    }[grain]
     path = _export_path("report")
     wb = Workbook()
 
@@ -189,7 +200,8 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
     ws["A1"].font = _TITLE_FONT
     _write_header(ws, 2, ["统计项", "数值"])
     label_map = {
-        "point_count": "数据点/截面穿越次数",
+        "point_count": count_label,
+        "behavior": "船舶行为",
         "vessel_count": "独立船舶数",
         "trajectory_count": "独立轨迹数",
         "timestamp_min": "最早时间",
@@ -207,9 +219,13 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
         "reverse_crossings": "反向穿越次数",
     }
     r = 3
-    for key, value in summary(filters).items():
-        if key in ("manifest",):
+    for key, value in overall.items():
+        if key == "manifest" or (not section and key in {"crossing_count", "forward_crossings", "reverse_crossings"}):
             continue
+        if key == "behavior":
+            value = BEHAVIOR_LABELS.get(value, "全部行为")
+        elif key == "spatial_mode":
+            value = {"section": "截面穿越", "region": "区域"}.get(filters.spatial_mode if filters else None, "全部区域")
         ws.cell(r, 1, label_map.get(key, key))
         ws.cell(r, 2, value)
         r += 1
@@ -219,8 +235,8 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
     ws2 = wb.create_sheet("航速分布")
     ws2["A1"] = "航速分布直方图"
     ws2["A1"].font = _TITLE_FONT
-    _write_header(ws2, 2, ["区间起点 (kn)", "区间终点 (kn)", "数据点数", "占比 (%)"])
-    hist = speed_histogram(filters=filters)
+    _write_header(ws2, 2, ["区间起点 (kn)", "区间终点 (kn)", count_label, "占比 (%)"])
+    hist = speed_histogram(bin_width=speed_bin_width, filters=filters)
     bins, counts = hist["bins"], hist["counts"]
     total_pts = sum(counts) or 1
     for i, (lo, hi, cnt) in enumerate(zip(bins[:-1], bins[1:], counts), 3):
@@ -234,8 +250,8 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
     ws3 = wb.create_sheet("船型结构")
     ws3["A1"] = "船舶类型分布"
     ws3["A1"].font = _TITLE_FONT
-    _write_header(ws3, 2, ["船型代码", "船型名称", "数据点数", "点数占比 (%)", "船舶数"])
-    types = ship_type_distribution(filters=filters)
+    _write_header(ws3, 2, ["船型代码", "船型名称", count_label, "占比 (%)", "船舶数"])
+    types = ship_type_distribution(limit=30, filters=filters)
     total_type_pts = sum(t["point_count"] for t in types) or 1
     for i, row in enumerate(types, 3):
         code = row["ship_type"]
@@ -251,7 +267,7 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
     ws4["A1"] = "船长分布直方图（按独立船舶统计）"
     ws4["A1"].font = _TITLE_FONT
     _write_header(ws4, 2, ["区间起点 (m)", "区间终点 (m)", "船舶数", "占比 (%)"])
-    ldist = length_distribution(filters=filters)
+    ldist = length_distribution(bin_width=length_bin_width, filters=filters)
     lbins, lcounts = ldist["bins"], ldist["counts"]
     total_vessels = sum(lcounts) or 1
     for i, (lo, hi, cnt) in enumerate(zip(lbins[:-1], lbins[1:], lcounts), 3):
@@ -263,21 +279,23 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
 
     # ── 5. 交通流时序 ─────────────────────────────────────────
     ws5 = wb.create_sheet("交通流时序")
-    ws5["A1"] = "交通流时间序列（按日）"
+    ws5["A1"] = f"交通流时间序列（{bucket_label}）"
     ws5["A1"].font = _TITLE_FONT
-    _write_header(ws5, 2, ["日期", "数据点数", "船舶数", "平均航速 (kn)"])
-    for i, row in enumerate(time_series(grain="day", filters=filters), 3):
+    headers = ["时间（北京时间）", count_label, "船舶数", "平均航速 (kn)"]
+    _write_header(ws5, 2, headers)
+    for i, row in enumerate(time_series(grain=grain, filters=filters), 3):
         ws5.cell(i, 1, row["bucket"])
         ws5.cell(i, 2, row["point_count"])
         ws5.cell(i, 3, row["vessel_count"])
         ws5.cell(i, 4, round(row["avg_speed"], 2) if row["avg_speed"] is not None else "")
+
     _autofit(ws5)
 
     # ── 6. 航行状态 ──────────────────────────────────────────
     ws6 = wb.create_sheet("航行状态")
     ws6["A1"] = "航行状态分布"
     ws6["A1"].font = _TITLE_FONT
-    _write_header(ws6, 2, ["状态", "数据点数", "占比 (%)"])
+    _write_header(ws6, 2, ["状态", count_label, "占比 (%)"])
     for i, row in enumerate(nav_state_distribution(filters=filters), 3):
         ws6.cell(i, 1, row["label"])
         ws6.cell(i, 2, row["point_count"])
@@ -291,7 +309,7 @@ def export_excel(filters: QueryFilters | None = None, direction_bin_width: int =
     _write_header(overview, 2, ["指标", "对地航向 (COG)", "船首向 (heading)"])
     metrics = [
         ("字段是否提供", lambda item: "是" if item["available"] else "未提供"),
-        ("筛选点数", lambda item: directions["point_count"]),
+        (count_label, lambda item: directions["point_count"]),
         ("有效点数", lambda item: item["valid_count"]),
         ("缺失/不可用点数", lambda item: item["missing_count"]),
         ("异常点数", lambda item: item["invalid_count"]),

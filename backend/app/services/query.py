@@ -8,7 +8,9 @@ from typing import Any
 
 import duckdb
 
+from backend.app.services.coastline import coastline_source
 from backend.app.services.dataset import active_parquet_path, read_active_manifest
+from backend.app.services.stop_behavior import STOP_BEHAVIORS, stop_matches
 
 
 @dataclass
@@ -30,7 +32,14 @@ class QueryFilters:
     behavior: str | None = None
 
 
-BEHAVIORS = {"berthing", "anchoring", "turning", "straight", "speed_change"}
+BEHAVIOR_LABELS = {
+    "berthing": "靠泊",
+    "anchoring": "锚泊",
+    "turning": "转向",
+    "straight": "直航",
+    "speed_change": "变速",
+}
+BEHAVIORS = set(BEHAVIOR_LABELS)
 
 
 def connect() -> duckdb.DuckDBPyConnection:
@@ -160,30 +169,63 @@ def spatial_points(filters: QueryFilters) -> list[tuple[float, float]]:
 
 
 def analysis_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
-    """Return the exact table used by statistics and exports.
-
-    Region mode returns points inside the polygon. Section mode returns one
-    row per intersecting pair of consecutive AIS points.
-    """
+    """Use the map's behavior-filtered points or the usual spatial selection."""
+    if filters and filters.behavior:
+        return trajectory_source(filters)
     if filters and filters.spatial_mode == "section" and filters.spatial_geometry:
         return _section_source(filters, matched_trajectories=False)
+    return _filtered_points(filters)
+
+
+def _filtered_points(filters: QueryFilters | None) -> tuple[str, list[Any]]:
     where, params = where_clause(filters)
     return f"(SELECT * FROM {points_sql()} {where}) AS filtered_points", params
 
 
-def trajectory_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
+def trajectory_source(filters: QueryFilters | None, *, include_stop_id: bool = False) -> tuple[str, list[Any]]:
     """Return points to draw as tracks for the current filter.
 
-    A section selects every point belonging to a crossing trajectory so the
-    map shows the complete selected tracks, while statistics count crossings.
+    A section selects the points belonging to crossing trajectories. With a
+    behavior filter, the dashboard also uses the matching trajectory points.
     """
     if filters and filters.spatial_mode == "section" and filters.spatial_geometry:
         source, params = _section_source(filters, matched_trajectories=True)
     else:
-        source, params = analysis_source(filters)
+        source, params = _filtered_points(filters)
     if filters and filters.behavior:
-        source = _behavior_segment_source(source, filters.behavior)
+        behavior = filters.behavior
+        matches = stop_match_relation() if behavior in STOP_BEHAVIORS else None
+        if matches:
+            source = stop_behavior_source(source, matches, behavior, include_stop_id=include_stop_id)
+        else:
+            source = _behavior_segment_source(source, behavior)
+            if include_stop_id and behavior in STOP_BEHAVIORS:
+                source = f"(SELECT *, NULL::BIGINT AS behavior_stop_id FROM {source}) AS legacy_stops"
     return source, params
+
+
+def stop_behavior_source(source: str, matches: str, behavior: str, *, include_stop_id: bool = False) -> str:
+    stop_id = ", stops.stop_id AS behavior_stop_id" if include_stop_id else ""
+    return f"""(
+        SELECT base.*{stop_id}
+        FROM (SELECT * FROM {source}) AS base
+        JOIN {matches} AS stops ON {stop_match_join()}
+        WHERE stops.stop_behavior = '{behavior}'
+    ) AS stop_segments"""
+
+
+def stop_match_relation() -> str | None:
+    coast = coastline_source()
+    if coast is None:
+        return None
+    result = stop_matches(active_parquet_path(), points_sql(), trajectory_column(), coast)
+    escaped = result.as_posix().replace("'", "''")
+    return f"read_parquet('{escaped}')"
+
+def stop_match_join() -> str:
+    return (f"base.mmsi = stops.mmsi AND base.{trajectory_column()} = stops.track_id "
+            "AND base.timestamp = stops.timestamp AND base.lon::DOUBLE = stops.lon "
+            "AND base.lat::DOUBLE = stops.lat")
 
 
 def normalize_behavior(behavior: str | None) -> str | None:

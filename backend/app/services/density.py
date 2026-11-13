@@ -6,8 +6,10 @@ from typing import Any
 
 from backend.app.services.analysis import require_dataset
 from backend.app.services.dataset import read_active_manifest
+from backend.app.services.stop_behavior import STOP_BEHAVIORS
 from backend.app.services.query import (
-    QueryFilters, behavior_condition, behavior_feature_source, connect, trajectory_source,
+    QueryFilters, behavior_condition, behavior_feature_source, connect, stop_behavior_source,
+    stop_match_relation, trajectory_source,
 )
 
 EARTH_RADIUS = 6_378_137.0
@@ -38,7 +40,11 @@ def density_features(cell_size_m: int = 250, filters: QueryFilters | None = None
     base_filters = replace(filters, behavior=None) if filters else None
     source, params = trajectory_source(base_filters)
     if filters and filters.behavior:
-        source = f"(SELECT * FROM ({behavior_feature_source(source)}) AS features WHERE {behavior_condition(filters.behavior)}) AS matched"
+        matches = stop_match_relation() if filters.behavior in STOP_BEHAVIORS else None
+        if matches:
+            source = stop_behavior_source(source, matches, filters.behavior)
+        else:
+            source = f"(SELECT * FROM ({behavior_feature_source(source)}) AS features WHERE {behavior_condition(filters.behavior)}) AS matched"
 
     # Validate before projection; in particular, poles must not reach ln(tan()).
     projected = f"""

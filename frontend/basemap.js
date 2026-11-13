@@ -7,6 +7,7 @@ window.AISBasemap = {
     const failures = new Map();
     const delays = [1500, 4500];
     let attempts = 0, timer = null, disposed = false, waitingForContent = false;
+    let coastStatus = null, coastActive = false, switcher = null;
     const text = document.getElementById("basemapStatusText");
     const panel = document.getElementById("basemapStatus");
     const button = document.getElementById("retryBasemapBtn");
@@ -36,7 +37,7 @@ window.AISBasemap = {
     function currentFailures() { return [...failures.values()].filter(visible); }
 
     function render() {
-      if (disposed) return;
+      if (disposed || coastActive) return;
       const missing = currentFailures();
       panel.classList.toggle("has-error", missing.length > 0);
       if (missing.length) {
@@ -58,7 +59,7 @@ window.AISBasemap = {
 
     function reload(manual = true) {
       const source = map.getSource("osm");
-      if (!source || disposed) return;
+      if (!source || disposed || coastActive) return;
       cancelRetry();
       if (manual) attempts = 0;
       failures.clear();
@@ -71,6 +72,7 @@ window.AISBasemap = {
     }
 
     function scheduleRetry() {
+      if (coastActive) return;
       const missing = currentFailures();
       if (missing.some(failure => failure.blocked)) return;
       const retryable = missing.some(failure => failure.retryable);
@@ -85,6 +87,13 @@ window.AISBasemap = {
 
     function handleError(event) {
       const url = event.error?.url || "";
+      if (event.sourceId === "coastline" || url.includes("/api/tiles/coastline/")) {
+        if (coastActive && event.error?.name !== "AbortError") {
+          panel.classList.add("has-error");
+          show("岸线瓦片加载失败。可切回 OSM 底图或刷新页面。");
+        }
+        return true;
+      }
       if (event.sourceId !== "osm" && !url.startsWith("https://tile.openstreetmap.org/")) return false;
       if (event.error?.name === "AbortError") return true;
       const status = Number(event.error?.status || 0);
@@ -106,6 +115,82 @@ window.AISBasemap = {
       render();
     }
 
+    function setMode(useCoastline) {
+      if (useCoastline && !coastStatus?.available) return;
+      coastActive = useCoastline;
+      if (useCoastline && !map.getSource("coastline")) {
+        map.addSource("coastline", {
+          type: "vector",
+          tiles: [location.origin + "/api/tiles/coastline/{z}/{x}/{y}.pbf?version=" + encodeURIComponent(coastStatus.version)],
+          minzoom: 7,
+          maxzoom: 17,
+          attribution: '<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a>',
+        });
+        map.addLayer({
+          id: "coastline-background",
+          type: "background",
+          paint: { "background-color": "#e9f4f7" },
+        }, "osm");
+        map.addLayer({
+          id: "coastline",
+          type: "line",
+          source: "coastline",
+          "source-layer": "coastline",
+          layout: { "line-join": "round", "line-cap": "round" },
+          paint: {
+            "line-color": "#21727d",
+            "line-width": ["interpolate", ["linear"], ["zoom"], 7, 1, 16, 1.7],
+          },
+        }, "osm");
+      }
+      map.setLayoutProperty("osm", "visibility", useCoastline ? "none" : "visible");
+      for (const id of ["coastline-background", "coastline"]) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", useCoastline ? "visible" : "none");
+      }
+      switcher.querySelector('[data-mode="osm"]').setAttribute("aria-pressed", String(!useCoastline));
+      switcher.querySelector('[data-mode="coastline"]').setAttribute("aria-pressed", String(useCoastline));
+      button.hidden = useCoastline;
+      if (useCoastline) {
+        cancelRetry();
+        panel.classList.remove("has-error");
+        show("当前底图：仅岸线");
+      } else {
+        if (currentFailures().length) reload(false);
+        render();
+      }
+    }
+
+    function mountSwitcher() {
+      const control = {
+        onAdd() {
+          switcher = document.createElement("div");
+          switcher.className = "maplibregl-ctrl basemap-switcher";
+          switcher.setAttribute("role", "group");
+          switcher.setAttribute("aria-label", "底图切换");
+          for (const [mode, label] of [["osm", "OSM 底图"], ["coastline", "仅岸线"]]) {
+            const option = document.createElement("button");
+            option.type = "button";
+            option.dataset.mode = mode;
+            option.textContent = label;
+            option.setAttribute("aria-pressed", String(mode === "osm"));
+            option.disabled = mode === "coastline";
+            option.addEventListener("click", () => setMode(mode === "coastline"));
+            switcher.append(option);
+          }
+          return switcher;
+        },
+        onRemove() { switcher?.remove(); },
+      };
+      map.addControl(control, "bottom-right");
+      const coastOption = switcher.querySelector('[data-mode="coastline"]');
+      coastOption.title = "正在检查本地岸线数据";
+      window.AIS.json("/api/coastline/status").then(status => {
+        coastStatus = status;
+        coastOption.disabled = !status.available;
+        coastOption.title = status.available ? "显示本地岸线" : "本机尚未配置岸线数据";
+      }).catch(() => { coastOption.title = "岸线数据状态读取失败，请刷新页面"; });
+    }
+
     function onMove() { scheduleRetry(); render(); }
     function onClick() { reload(true); }
     function dispose() {
@@ -123,6 +208,7 @@ window.AISBasemap = {
     map.on("idle", render);
     map.on("moveend", onMove);
     map.on("remove", dispose);
+    map.once("load", mountSwitcher);
     render();
     return { handleError, reload, dispose };
   },

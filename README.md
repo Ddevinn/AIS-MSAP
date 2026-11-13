@@ -314,15 +314,29 @@ depend on reporting frequency and do not represent vessel abundance.
 
 ## Vessel behavior recognition
 
-`GET /api/behaviors` recognizes berthing, anchoring, turning, straight sailing,
-and speed changes from consecutive AIS points. It supports the same time,
-vessel, speed, ship-type, and spatial filters as the other statistics APIs.
-The default rules are: speed at or below 0.5 kn with implied movement at or
-below 0.2 kn for berthing; the same reported speed with greater implied
-movement for anchoring; course changes of at least 15 degrees for turning;
-course changes up to 5 degrees with acceleration below 0.5 kn/min for straight
-sailing; and acceleration of at least 0.5 kn/min for speed changes. Motion
-rules ignore gaps longer than 10 minutes.
+The bottom-right basemap switch offers OSM tiles and an offline coastline.
+Download the WGS84 split [OpenStreetMap coastline Shapefile](https://osmdata.openstreetmap.de/data/coastlines.html),
+extract it, then run the following with the platform's Python interpreter.
+
+```text
+python scripts/configure_coastline.py "/path/to/coastlines-split-4326"
+```
+
+On Windows, use `.venv/Scripts/python.exe` in the source checkout or
+`runtime/python.exe` in the portable package. Alternatively, set
+`AIS_COASTLINE_PATH` to the Shapefile or its directory, or place `lines.shp` and
+`lines.prj` in `data/reference/coastline/`. The data is © OpenStreetMap
+contributors under the [ODbL](https://www.openstreetmap.org/copyright).
+The spatial index is cached under `data/cache/coastline/`.
+
+With coastline data configured, the back end first identifies localized
+stops at up to 0.5 kn, spanning at least 15 minutes and 5 observed timestamps.
+It classifies tight stops within 100 m of shore as berthing, and confined
+stops with a wider motion pattern at least 150 m from shore as anchoring.
+Stops with insufficient evidence are omitted from both categories. The
+thresholds are fixed in the back end. Without coastline data, the legacy
+point-level rules remain available. Turning, straight sailing, and speed
+changes continue to use the existing motion rules.
 
 Pass `behavior=berthing|anchoring|turning|straight|speed_change` to the track
 tile endpoint to draw only the trajectory portions where the selected behavior

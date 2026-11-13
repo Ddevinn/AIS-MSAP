@@ -35,6 +35,8 @@ let lengthChart = null;
 let courseDirectionChart = null;
 let headingDirectionChart = null;
 let directionRequestId = 0;
+let summaryRequestId = 0;
+const statisticRequests = new Map();
 
 function shipTypeName(code) {
   const n = Number(code);
@@ -602,6 +604,8 @@ async function loadAll() {
 }
 
 function clearDatasetResults() {
+  summaryRequestId++;
+  statisticRequests.clear();
   $("metrics").innerHTML = "";
   $("navStatePanel").innerHTML = '<div class="muted">等待加载数据</div>';
   [speedChart, shipChart, timeChart, lengthChart].forEach((chart) => chart?.destroy());
@@ -617,24 +621,49 @@ function clearDatasetResults() {
 }
 
 async function loadSummary() {
-  const data = await api(`/api/summary${queryString()}`);
-  // 时间范围仅在首次加载时预填；经纬度保持为空，避免覆盖空间标记筛选。
-  if (!$('startInput').value && data.timestamp_min) {
-    $('startInput').value = tsToDatetimeLocal(data.timestamp_min);
+  if (!state.manifest) return;
+  const requestId = ++summaryRequestId;
+  const key = state.activeKey;
+  const behavior = state.behaviorFilter;
+  const current = () => requestId === summaryRequestId && key === state.activeKey;
+  const path = "/api/summary";
+  $("metrics").innerHTML = '<p class="summary-message muted" role="status">正在统计轨迹…</p>';
+
+  if (behavior && state.spatialFilter) {
+    // Keep the spatial panel's own region or crossing totals.
+    api(path + queryString({ behavior: null })).then((data) => {
+      if (current()) renderSpatialTrafficStats(data);
+    }).catch(() => {
+      if (current()) $("spatialTrafficStats").textContent = "空间统计加载失败，请重试。";
+    });
   }
-  if (!$('endInput').value && data.timestamp_max) {
-    $('endInput').value = tsToDatetimeLocal(data.timestamp_max);
+
+  try {
+    const data = await api(path + queryString({ behavior }));
+    if (!current()) return;
+    if (behavior && data.behavior !== behavior) throw new Error("请重新启动平台以启用行为统计。");
+    // Keep the default time range tied to the unfiltered data.
+    if (!behavior) {
+      if (!$("startInput").value && data.timestamp_min) $("startInput").value = tsToDatetimeLocal(data.timestamp_min);
+      if (!$("endInput").value && data.timestamp_max) $("endInput").value = tsToDatetimeLocal(data.timestamp_max);
+      renderSpatialTrafficStats(data);
+    }
+
+    const sectionMode = data.spatial_mode === "section";
+    renderMetrics([
+      [sectionMode ? "截面穿越" : "轨迹点", numberFormat.format(data.point_count || 0)],
+      ["船舶数", numberFormat.format(data.vessel_count || 0)],
+      ["平均航速", formatNumber(data.speed_avg, 2)],
+      ["轨迹数", numberFormat.format(data.trajectory_count || 0)],
+      [sectionMode ? "正向穿越" : "最早时间", sectionMode ? numberFormat.format(data.forward_crossings || 0) : formatTime(data.timestamp_min)],
+      [sectionMode ? "反向穿越" : "最晚时间", sectionMode ? numberFormat.format(data.reverse_crossings || 0) : formatTime(data.timestamp_max)],
+    ]);
+  } catch (error) {
+    if (current()) {
+      $("metrics").innerHTML = '<p class="summary-message muted" role="status"></p>';
+      $("metrics").firstElementChild.textContent = "统计加载失败：" + error.message;
+    }
   }
-  const sectionMode = data.spatial_mode === "section";
-  renderMetrics([
-    [sectionMode ? "截面穿越" : "轨迹点", numberFormat.format(data.point_count || 0)],
-    ["船舶数", numberFormat.format(data.vessel_count || 0)],
-    ["平均航速", formatNumber(data.speed_avg, 2)],
-    ["轨迹数", numberFormat.format(data.trajectory_count || 0)],
-    [sectionMode ? "正向穿越" : "最早时间", sectionMode ? numberFormat.format(data.forward_crossings || 0) : formatTime(data.timestamp_min)],
-    [sectionMode ? "反向穿越" : "最晚时间", sectionMode ? numberFormat.format(data.reverse_crossings || 0) : formatTime(data.timestamp_max)],
-  ]);
-  renderSpatialTrafficStats(data);
 }
 
 function renderMetrics(items) {
@@ -795,7 +824,7 @@ async function loadDirectionHistograms() {
   const activeKey = state.activeKey;
   $("courseDirectionStatus").textContent = $("headingDirectionStatus").textContent = "正在统计航向…";
   try {
-    const data = await api(`/api/direction-histograms${queryString({ bin_width: $("directionBinWidthSelect").value })}`);
+    const data = await api(`/api/direction-histograms${statisticsQuery({ bin_width: $("directionBinWidthSelect").value })}`);
     if (requestId !== directionRequestId || activeKey !== state.activeKey) return;
     courseDirectionChart?.destroy();
     headingDirectionChart?.destroy();
@@ -811,9 +840,28 @@ async function loadDirectionHistograms() {
   }
 }
 
+function statisticsQuery(extra = {}) {
+  return queryString({ behavior: state.behaviorFilter, ...extra });
+}
+
+function statisticsMode() {
+  return state.behaviorFilter ? null : state.spatialFilter?.mode;
+}
+
+async function loadStatistic(path, extra) {
+  const query = statisticsQuery(extra);
+  const activeKey = state.activeKey;
+  const request = Symbol();
+  statisticRequests.set(path, request);
+  const data = await api(path + query);
+  if (statisticRequests.get(path) === request && activeKey === state.activeKey
+      && query === statisticsQuery(extra)) return data;
+}
+
 async function loadSpeedHistogram() {
   const binWidth = $("speedBinWidthSelect")?.value || "1";
-  const data = await api(`/api/speed-histogram${queryString({ bin_width: binWidth })}`);
+  const data = await loadStatistic("/api/speed-histogram", { bin_width: binWidth });
+  if (!data) return;
   const canvas = $("speedCanvas");
   if (speedChart) { speedChart.destroy(); speedChart = null; }
   const total = (data.counts || []).reduce((a, b) => a + b, 0);
@@ -856,7 +904,8 @@ async function loadSpeedHistogram() {
 }
 
 async function loadShipTypes() {
-  const data = await api(`/api/ship-types${queryString({ limit: 30 })}`);
+  const data = await loadStatistic("/api/ship-types", { limit: 30 });
+  if (!data) return;
   const canvas = $("shipCanvas");
   if (shipChart) { shipChart.destroy(); shipChart = null; }
   // Aggregate by display name, merge unknown/invalid codes into "未知"
@@ -877,7 +926,7 @@ async function loadShipTypes() {
     .map(([name, val]) => ({ name, ...val }))
     .sort((a, b) => b.point_count - a.point_count);
   const totalPoints = agg.reduce((s, item) => s + item.point_count, 0);
-  const countLabel = state.spatialFilter?.mode === "section" ? "穿越次数" : "点数";
+  const countLabel = statisticsMode() === "section" ? "穿越次数" : "点数";
   shipChart = new Chart(canvas, {
     type: "bar",
     data: {
@@ -922,8 +971,8 @@ async function loadShipTypes() {
 }
 
 async function loadNavStates() {
-  const data = await api(`/api/nav-states${queryString()}`);
-  renderNavStates(data);
+  const data = await loadStatistic("/api/nav-states");
+  if (data) renderNavStates(data);
 }
 
 function renderNavStates(rows) {
@@ -935,7 +984,6 @@ function renderNavStates(rows) {
   }
   const colors = {
     underway: "#1d6fb8",
-    low_speed: "#d47b1f",
     stopped: "#14907f",
   };
   panel.innerHTML = rows
@@ -945,7 +993,7 @@ function renderNavStates(rows) {
         <div>
           <div class="state-bar-label"><span>${row.label || row.state}</span><strong>${formatNumber(pct, 1)}%</strong></div>
           <div class="progress-track"><div class="progress-fill" style="width:${pct}%;background:${colors[row.state] || "#64748b"}"></div></div>
-          <div class="muted">${numberFormat.format(row.point_count || 0)} ${state.spatialFilter?.mode === "section" ? "次穿越" : "点"}</div>
+          <div class="muted">${numberFormat.format(row.point_count || 0)} ${statisticsMode() === "section" ? "次穿越" : "点"}</div>
         </div>
       `;
     })
@@ -962,6 +1010,7 @@ function applyBehaviorFilter() {
   $("behaviorFilterStatus").textContent = `正在显示：${select.options[select.selectedIndex].text}`;
   updateBehaviorExportButton();
   refreshTrackTiles();
+  loadAll();
 }
 
 function clearBehaviorFilter() {
@@ -970,6 +1019,7 @@ function clearBehaviorFilter() {
   $("behaviorFilterStatus").textContent = "显示全部轨迹";
   updateBehaviorExportButton();
   refreshTrackTiles();
+  loadAll();
 }
 
 function updateBehaviorExportButton() {
@@ -1003,11 +1053,12 @@ function renderQualityPanel(counts) {
 
 async function loadTimeSeries() {
   const grain = $("grainSelect").value;
-  const data = await api(`/api/time-series${queryString({ grain })}`);
+  const data = await loadStatistic("/api/time-series", { grain });
+  if (!data) return;
   const canvas = $("timeCanvas");
   if (timeChart) { timeChart.destroy(); timeChart = null; }
   const grainLabel = { day: "日期", hour: "时刻", month: "月份" }[grain] || grain;
-  const flowLabel = state.spatialFilter?.mode === "section" ? "截面穿越次数" : "轨迹点数";
+  const flowLabel = statisticsMode() === "section" ? "截面穿越次数" : "轨迹点数";
   timeChart = new Chart(canvas, {
     type: "line",
     data: {
@@ -1050,7 +1101,8 @@ async function loadTimeSeries() {
 
 async function loadLengthHistogram() {
   const binWidth = $("lengthBinWidthSelect")?.value || "10";
-  const data = await api(`/api/length-histogram${queryString({ bin_width: binWidth })}`);
+  const data = await loadStatistic("/api/length-histogram", { bin_width: binWidth });
+  if (!data) return;
   const canvas = $("lengthCanvas");
   if (lengthChart) { lengthChart.destroy(); lengthChart = null; }
   const total = (data.counts || []).reduce((a, b) => a + b, 0);
@@ -2060,7 +2112,6 @@ function collectCleaningConfig() {
     max_time_gap_minutes: valueOrNull("cleanGapInput") ?? 60,
     max_segment_distance_nm: valueOrNull("cleanDistanceGapInput") ?? 3,
     stop_speed_knots: valueOrNull("cleanStopSpeedInput") ?? 0.5,
-    low_speed_knots: valueOrNull("cleanLowSpeedInput") ?? 3,
     remove_exact_duplicates: $("cleanDedupeInput").checked,
   };
 }
@@ -2139,5 +2190,11 @@ function escapeHtml(value) {
 
 
 function exportExcel() {
-  window.location.href = `/api/export/excel${queryString({ direction_bin_width: $("directionBinWidthSelect").value })}`;
+  const query = statisticsQuery({
+    speed_bin_width: $("speedBinWidthSelect").value,
+    length_bin_width: $("lengthBinWidthSelect").value,
+    direction_bin_width: $("directionBinWidthSelect").value,
+    grain: $("grainSelect").value,
+  });
+  window.location.href = `/api/export/excel${query}`;
 }
