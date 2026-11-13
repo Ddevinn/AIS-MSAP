@@ -162,13 +162,15 @@ def spatial_points(filters: QueryFilters) -> list[tuple[float, float]]:
 
 
 def analysis_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
-    """Return the exact table used by statistics and exports.
-
-    Region mode returns points inside the polygon. Section mode returns one
-    row per intersecting pair of consecutive AIS points.
-    """
+    """Use the map's behavior-filtered points or the usual spatial selection."""
+    if filters and filters.behavior:
+        return trajectory_source(filters)
     if filters and filters.spatial_mode == "section" and filters.spatial_geometry:
         return _section_source(filters, matched_trajectories=False)
+    return _filtered_points(filters)
+
+
+def _filtered_points(filters: QueryFilters | None) -> tuple[str, list[Any]]:
     where, params = where_clause(filters)
     return f"(SELECT * FROM {points_sql()} {where}) AS filtered_points", params
 
@@ -176,13 +178,13 @@ def analysis_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
 def trajectory_source(filters: QueryFilters | None, *, include_stop_id: bool = False) -> tuple[str, list[Any]]:
     """Return points to draw as tracks for the current filter.
 
-    A section selects every point belonging to a crossing trajectory so the
-    map shows the complete selected tracks, while statistics count crossings.
+    A section selects the points belonging to crossing trajectories. With a
+    behavior filter, the dashboard also uses the matching trajectory points.
     """
     if filters and filters.spatial_mode == "section" and filters.spatial_geometry:
         source, params = _section_source(filters, matched_trajectories=True)
     else:
-        source, params = analysis_source(filters)
+        source, params = _filtered_points(filters)
     if filters and filters.behavior:
         behavior = filters.behavior
         matches = stop_match_relation() if behavior in STOP_BEHAVIORS else None

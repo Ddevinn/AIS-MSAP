@@ -18,12 +18,14 @@ def require_dataset() -> None:
 
 def summary(filters: QueryFilters | None = None) -> dict[str, Any]:
     require_dataset()
+    behavior = filters.behavior if filters else None
+    spatial_mode = filters.spatial_mode if filters and not behavior else None
     source, params = analysis_source(filters)
     track_col = trajectory_column()
     direction_stats = (
         ", count(*) FILTER (WHERE crossing_direction = 1)::UBIGINT AS forward_crossings, "
         "count(*) FILTER (WHERE crossing_direction = -1)::UBIGINT AS reverse_crossings"
-        if filters and filters.spatial_mode == "section"
+        if spatial_mode == "section"
         else ", 0::UBIGINT AS forward_crossings, 0::UBIGINT AS reverse_crossings"
     )
     sql = f"""
@@ -62,8 +64,9 @@ def summary(filters: QueryFilters | None = None) -> dict[str, Any]:
         "reverse_crossings",
     ]
     result = dict(zip(keys, row))
-    result["spatial_mode"] = filters.spatial_mode if filters else None
-    result["crossing_count"] = result["point_count"] if filters and filters.spatial_mode == "section" else None
+    result["behavior"] = behavior
+    result["spatial_mode"] = spatial_mode
+    result["crossing_count"] = result["point_count"] if spatial_mode == "section" else None
     result["manifest"] = read_active_manifest()
     return result
 
@@ -148,48 +151,21 @@ def nav_state_distribution(filters: QueryFilters | None = None) -> list[dict[str
     require_dataset()
     source, params = analysis_source(filters)
     manifest = read_active_manifest() or {}
-    columns = manifest.get("columns", [])
-    state_expr = (
-        "nav_state"
-        if "nav_state" in columns
-        else """
-        CASE
-            WHEN speed <= 0.5 THEN 'stopped'
-            WHEN speed <= 3.0 THEN 'low_speed'
-            ELSE 'underway'
-        END
-        """
-    )
+    stop_speed = float(manifest.get("config", {}).get("stop_speed_knots", 0.5))
+    stopped = f"speed <= {stop_speed}"
+    if "nav_state" in manifest.get("columns", []):
+        stopped = f"coalesce(nav_state = 'stopped', {stopped})"
+
     with connect() as con:
-        rows = con.execute(
-            f"""
-            WITH states AS (
-                SELECT {state_expr} AS nav_state
-                FROM {source}
-            ),
-            counted AS (
-                SELECT nav_state, count(*)::UBIGINT AS point_count
-                FROM states
-                GROUP BY nav_state
-            )
-            SELECT
-                nav_state,
-                point_count,
-                point_count * 100.0 / NULLIF(sum(point_count) OVER (), 0) AS percentage
-            FROM counted
-            ORDER BY point_count DESC
-            """,
-            params,
-        ).fetchall()
-    labels = {"underway": "航行", "low_speed": "低速", "stopped": "停留"}
+        total, stopped_count = con.execute(
+            f"SELECT count(*), count(*) FILTER (WHERE {stopped}) FROM {source}", params
+        ).fetchone()
+    if not total:
+        return []
+    counts = [("underway", "在航", total - stopped_count), ("stopped", "停留", stopped_count)]
     return [
-        {
-            "state": str(state),
-            "label": labels.get(str(state), str(state)),
-            "point_count": int(count),
-            "percentage": float(percentage or 0),
-        }
-        for state, count, percentage in rows
+        {"state": state, "label": label, "point_count": count, "percentage": count * 100.0 / total}
+        for state, label, count in counts
     ]
 
 

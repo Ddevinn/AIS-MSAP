@@ -41,7 +41,6 @@ class CleaningConfig(BaseModel):
     max_time_gap_minutes: float = Field(default=60.0, ge=1.0)
     max_segment_distance_nm: float = Field(default=3.0, ge=0.01)
     stop_speed_knots: float = Field(default=0.5, ge=0.0)
-    low_speed_knots: float = Field(default=3.0, ge=0.0)
     remove_exact_duplicates: bool = True
 
 
@@ -244,8 +243,6 @@ def _validate_config(config: CleaningConfig) -> None:
         raise ValueError("speed_min must be <= speed_max")
     if config.course_min > config.course_max:
         raise ValueError("course_min must be <= course_max")
-    if config.stop_speed_knots > config.low_speed_knots:
-        raise ValueError("stop_speed_knots must be <= low_speed_knots")
 
 
 def _base_table_sql(source: str) -> str:
@@ -425,7 +422,6 @@ def _flagged_table_sql(config: CleaningConfig) -> str:
             *,
             CASE
                 WHEN speed <= {config.stop_speed_knots} THEN 'stopped'
-                WHEN speed <= {config.low_speed_knots} THEN 'low_speed'
                 ELSE 'underway'
             END AS nav_state,
             (
