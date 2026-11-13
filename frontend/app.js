@@ -2190,5 +2190,11 @@ function escapeHtml(value) {
 
 
 function exportExcel() {
-  window.location.href = `/api/export/excel${statisticsQuery({ direction_bin_width: $("directionBinWidthSelect").value })}`;
+  const query = statisticsQuery({
+    speed_bin_width: $("speedBinWidthSelect").value,
+    length_bin_width: $("lengthBinWidthSelect").value,
+    direction_bin_width: $("directionBinWidthSelect").value,
+    grain: $("grainSelect").value,
+  });
+  window.location.href = `/api/export/excel${query}`;
 }

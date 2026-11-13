@@ -6,7 +6,7 @@ from typing import Any
 from backend.app.config import MAX_BROWSER_TRACK_POINTS
 from backend.app.services.dataset import dataset_ready, read_active_manifest
 from backend.app.services.query import (
-    QueryFilters, analysis_source, behavior_condition, behavior_feature_source, connect,
+    BEHAVIOR_LABELS, QueryFilters, analysis_source, behavior_condition, behavior_feature_source, connect,
     points_sql, stop_match_join, stop_match_relation, trajectory_column,
 )
 
@@ -208,13 +208,7 @@ def behavior_distribution(filters: QueryFilters | None = None) -> list[dict[str,
             params,
         ).fetchall()
 
-    labels = {
-        "berthing": "靠泊",
-        "anchoring": "锚泊",
-        "turning": "转向",
-        "straight": "直航",
-        "speed_change": "变速",
-    }
+    labels = BEHAVIOR_LABELS
     counts = {
         behavior: {
             "behavior": behavior,

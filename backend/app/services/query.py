@@ -32,7 +32,14 @@ class QueryFilters:
     behavior: str | None = None
 
 
-BEHAVIORS = {"berthing", "anchoring", "turning", "straight", "speed_change"}
+BEHAVIOR_LABELS = {
+    "berthing": "靠泊",
+    "anchoring": "锚泊",
+    "turning": "转向",
+    "straight": "直航",
+    "speed_change": "变速",
+}
+BEHAVIORS = set(BEHAVIOR_LABELS)
 
 
 def connect() -> duckdb.DuckDBPyConnection:

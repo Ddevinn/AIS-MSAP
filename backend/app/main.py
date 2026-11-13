@@ -702,14 +702,25 @@ def api_track(mmsi: int, max_points: int = 50000) -> dict[str, object]:
 
 
 @app.get("/api/export/excel")
-def api_export_excel(direction_bin_width: int = 15, filters: QueryFilters = Depends(parse_filters)) -> FileResponse:
+def api_export_excel(
+    direction_bin_width: int = 15,
+    speed_bin_width: float = Query(default=1.0, gt=0, allow_inf_nan=False),
+    length_bin_width: float = Query(default=10.0, gt=0, allow_inf_nan=False),
+    grain: str = "day",
+    filters: QueryFilters = Depends(parse_filters),
+) -> FileResponse:
+    if grain not in {"hour", "day", "month"}:
+        raise HTTPException(422, "请选择有效的时间间隔。")
     try:
         validate_direction_bin_width(direction_bin_width)
-    except ValueError as exc:
+        path = export_excel(
+            filters=filters, direction_bin_width=direction_bin_width,
+            speed_bin_width=speed_bin_width, length_bin_width=length_bin_width, grain=grain,
+        )
+        return FileResponse(path, filename=path.name,
+                            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    except (OverflowError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    try:
-        path = export_excel(filters=filters, direction_bin_width=direction_bin_width)
-        return FileResponse(path, filename=Path(path).name)
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
