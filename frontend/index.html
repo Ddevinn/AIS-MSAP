@@ -6,7 +6,7 @@
     <title>AIS数据分析与态势评估平台</title>
     <link rel="icon" type="image/png" href="/static/assets/ais-logo.png?v=20261014-logo-3" />
     <link rel="stylesheet" href="/static/vendor/maplibre-gl.css" />
-    <link rel="stylesheet" href="/static/styles.css?v=coastline-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=coastline-2" />
     <link rel="stylesheet" href="/static/brand.css?v=20261014-logo-3" />
   </head>
   <body>
@@ -249,17 +249,6 @@
                   <button id="densityToggleBtn" type="button" aria-pressed="false"><span class="density-layer-dot"></span>空间密度</button>
                   <button id="tracksToggleBtn" type="button" aria-pressed="false"><span class="track-layer-dot"></span>船舶轨迹</button>
                 </div>
-                <aside id="densityLegend" class="density-legend" aria-label="空间密度图例" hidden>
-                  <div class="density-legend-head"><div><span class="eyebrow">AIS · 空间分布</span><h3>船舶活动密度</h3></div><span id="densityModeBadge" class="density-badge">热力</span></div>
-                  <p id="densityScope" class="density-scope">全部行为 · 当前筛选</p>
-                  <div id="densityLegendBody" hidden>
-                    <div class="density-colorbar" aria-hidden="true"></div>
-                    <div id="densityScaleLabels" class="density-scale-labels"></div>
-                    <div class="density-legend-stats"><span><b id="densityPointCount">—</b>AIS 点</span><span><b id="densityCellCount">—</b>有数据网格</span></div>
-                    <p id="densityLegendNote" class="density-legend-note"></p>
-                  </div>
-                  <p id="densityLegendStatus" class="density-legend-status" role="status">正在计算空间密度…</p>
-                </aside>
                 <button id="mapCoordinates" class="map-coordinates" type="button" title="点击切换为度分秒">经度 —　纬度 —</button>
                 <div id="mapStatus" class="map-status">地图初始化中</div>
                 <div id="trackInspectionHint" class="map-status track-inspection-hint" hidden></div>
@@ -440,7 +429,7 @@
     <script src="/static/session.js?v=20261014-1"></script>
     <script src="/static/basemap.js?v=coastline-1"></script>
     <script src="/static/app.js?v=20261111-marker-categories-1"></script>
-    <script src="/static/density.js?v=20261110-fixed-grid-size-1"></script>
+    <script src="/static/density.js?v=coastline-2"></script>
     <script src="/static/track-inspection.js?v=20261110-track-controls-1"></script>
     <script src="/static/track-annotations.js?v=20261110-1"></script>
     <script src="/static/vessel-history.js?v=20261111-vessel-scope-1"></script>

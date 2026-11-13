@@ -36,7 +36,6 @@ window.addEventListener("DOMContentLoaded", () => {
       densityState.mode = button.dataset.densityMode;
       removeDensityPopup();
       updateDensityStyle();
-      renderDensityLegend();
     });
   });
   $("densityCellSizeSelect").addEventListener("change", () => {
@@ -140,7 +139,6 @@ function updateDensityStyle() {
       map.setPaintProperty("osm", "raster-contrast", densityState.enabled ? -0.12 : 0);
     }
   }
-  $("densityLegend").hidden = !densityState.enabled || !state.manifest;
   updateDensityExportButton();
   if (!densityState.enabled) removeDensityPopup();
 }
@@ -159,8 +157,6 @@ function clearDensityData() {
   removeDensityPopup();
   state.map?.getSource("ais-density-cells")?.setData(emptyDensity());
   state.map?.getSource("ais-density-points")?.setData(emptyDensity());
-  $("densityLegend").hidden = true;
-  $("densityLegendBody").hidden = true;
   $("densityPanelStatus").textContent = "等待加载数据";
   $("densityPeakCount").textContent = $("densityActualSize").textContent = "—";
   updateDensityExportButton();
@@ -170,32 +166,12 @@ function densitySizeLabel(meters) {
   return meters >= 1000 ? `${formatNumber(meters / 1000, 1)} km` : `${numberFormat.format(meters)} m`;
 }
 
-function renderDensityLegend() {
+function updateDensitySummary() {
   updateDensityExportButton();
   const meta = densityState.data?.metadata;
-  const grid = densityState.mode === "grid";
-  $("densityModeBadge").textContent = grid ? "网格" : "热力";
-  const behaviorLabel = $("behaviorSelect").selectedOptions[0]?.text || "全部行为";
-  const behavior = state.behaviorFilter ? behaviorLabel : "全部行为";
-  const scope = state.spatialFilter?.mode === "section" ? "截面选中轨迹" : state.spatialFilter ? "所选区域" : "当前筛选";
-  $("densityScope").textContent = `${behavior} · ${scope}`;
   if (!meta) return;
-  $("densityLegendBody").hidden = !meta.cell_count;
-  $("densityLegendStatus").hidden = Boolean(meta.cell_count);
-  $("densityLegendStatus").textContent = "当前筛选范围没有可显示的 AIS 点。";
-  document.querySelector(".density-colorbar").style.background = grid && meta.max_count === 1
-    ? DENSITY_COLORS[4] : "";
-  $("densityScaleLabels").innerHTML = grid
-    ? (meta.max_count === 1 ? "<span>每格 1 个 AIS 点</span>"
-      : `<span>1</span><span>点 / 网格</span><span>${numberFormat.format(meta.max_count)}</span>`)
-    : "<span>低</span><span>相对热度</span><span>高</span>";
-  $("densityPointCount").textContent = numberFormat.format(meta.point_count);
-  $("densityCellCount").textContent = numberFormat.format(meta.cell_count);
   $("densityPeakCount").textContent = numberFormat.format(meta.max_count);
   $("densityActualSize").textContent = `约 ${densitySizeLabel(meta.cell_size_m)}`;
-  $("densityLegendNote").textContent = grid
-    ? `AIS 点 / 网格 · 对数色阶 · 约 ${densitySizeLabel(meta.cell_size_m)}`
-    : `平滑热点 · 约 ${densitySizeLabel(meta.cell_size_m)} 聚合 · 点击查看计数`;
   const note = meta.coarsened ? "已自动合并网格，保留全部符合条件的点。" : "";
   $("densityPanelStatus").textContent = meta.cell_count ? `已统计 ${numberFormat.format(meta.point_count)} 个 AIS 点。${note}` : "当前筛选无数据，可调整筛选条件。";
 }
@@ -255,7 +231,7 @@ async function refreshDensityLayer(force = false) {
   if (!state.mapLoaded || !state.manifest || !densityState.enabled) return;
   const url = densityGridUrl();
   if (!force && densityState.dataKey === url && densityState.data) {
-    renderDensityLegend();
+    updateDensitySummary();
     return;
   }
   if (!force && densityState.requestKey === url) return;
@@ -269,12 +245,9 @@ async function refreshDensityLayer(force = false) {
   removeDensityPopup();
   state.map.getSource("ais-density-cells").setData(emptyDensity());
   state.map.getSource("ais-density-points").setData(emptyDensity());
-  $("densityLegend").hidden = false;
-  $("densityLegendBody").hidden = true;
-  $("densityLegendStatus").hidden = false;
-  $("densityLegendStatus").textContent = $("densityPanelStatus").textContent = "正在计算空间密度…";
+  $("densityPanelStatus").textContent = "正在计算空间密度…";
   $("densityPeakCount").textContent = $("densityActualSize").textContent = "—";
-  renderDensityLegend();
+  updateDensitySummary();
   let failureMessage = "密度加载失败，请点击“重新计算密度”重试。";
   try {
     const response = await (window.AIS ? window.AIS.request(url, { signal: controller.signal }) : fetch(url, { signal: controller.signal }));
@@ -298,10 +271,10 @@ async function refreshDensityLayer(force = false) {
     state.map.getSource("ais-density-cells").setData(cells);
     state.map.getSource("ais-density-points").setData(points);
     updateDensityStyle();
-    renderDensityLegend();
+    updateDensitySummary();
   } catch (error) {
     if (error.name === "AbortError" || requestId !== densityState.requestId) return;
-    $("densityLegendStatus").textContent = $("densityPanelStatus").textContent = failureMessage;
+    $("densityPanelStatus").textContent = failureMessage;
   } finally {
     if (requestId === densityState.requestId) {
       densityState.controller = null;
