@@ -37,7 +37,7 @@ def require_track_version(data_version: str) -> dict:
 
 
 def _paired_points(
-    source: str, track_col: str, columns: set[str], condition: str, include_stop_id: bool,
+    source: str, track_col: str, columns: set[str], condition: str, include_stop_id: bool = False,
 ) -> str:
     source_delta = "time_delta_seconds" if "time_delta_seconds" in columns else "NULL::BIGINT"
     stop_id = "behavior_stop_id" if include_stop_id else "NULL::BIGINT"
