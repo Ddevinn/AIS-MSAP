@@ -15,16 +15,18 @@ from PIL import Image, ImageDraw
 from backend.app.config import CACHE_DIR
 from backend.app.context import dataset_context
 from backend.app.services.analysis import require_dataset
+from backend.app.services.coastline import coastline_source
 from backend.app.services.dataset import active_parquet_path, read_active_manifest
 from backend.app.services.query import QueryFilters, connect, trajectory_column, trajectory_source, where_clause
 from backend.app.services.tiles import _validate_tile, tile_bbox_mercator, tile_bbox_wgs84
+from backend.app.services.stop_behavior import STOP_BEHAVIORS, STOP_BEHAVIOR_VERSION
 
 TILE_SIZE = 256
 RENDER_SCALE = 2
 TRACK_COLOR = "0f4c81"
 TRACK_WIDTH = 1.8
 TRACK_OPACITY = 0.86
-CACHE_VERSION = "actual-tracks-v8-ordered-points"
+CACHE_VERSION = "actual-tracks-v9-coastline"
 CACHE_DIR_PATH = CACHE_DIR / "actual_track_tiles"
 
 
@@ -43,7 +45,7 @@ def cached_track_tile_png(z: int, x: int, y: int, filters: QueryFilters | None =
     require_dataset()
     _validate_tile(z, x, y)
     filters = filters or QueryFilters()
-    signature = _data_signature()
+    signature = _data_signature(filters.behavior)
     key = _tile_key(z, x, y, filters, TRACK_COLOR, TRACK_WIDTH, TRACK_OPACITY, signature)
     disk_path = _disk_path(key)
     if disk_path.exists():
@@ -56,7 +58,7 @@ def track_tile_png(z: int, x: int, y: int, filters: QueryFilters | None = None) 
     cached = cached_track_tile_png(z, x, y, filters)
     if cached is not None:
         return cached
-    key = _tile_key(z, x, y, filters, TRACK_COLOR, TRACK_WIDTH, TRACK_OPACITY, _data_signature())
+    key = _tile_key(z, x, y, filters, TRACK_COLOR, TRACK_WIDTH, TRACK_OPACITY, _data_signature(filters.behavior))
     png = _track_tile_cached(*key)
     _write_cache(_disk_path(key), png)
     return png
@@ -112,7 +114,7 @@ def _track_tile_cached(
         spatial_geometry=spatial_geometry,
         behavior=behavior,
     )
-    source, source_params = trajectory_source(filters)
+    source, source_params = trajectory_source(filters, include_stop_id=True)
     west, south, east, north = tile_bbox_wgs84(z, x, y)
     manifest = read_active_manifest() or {}
     max_segment_nm, max_gap_seconds = track_gap_limits(manifest)
@@ -131,9 +133,10 @@ def _track_tile_cached(
     track_col = trajectory_column()
     columns = set(manifest.get("columns", []))
     time_delta_select = "time_delta_seconds" if "time_delta_seconds" in columns else "NULL::BIGINT AS time_delta_seconds"
+    stop_id_select = "behavior_stop_id" if behavior in STOP_BEHAVIORS else "NULL::BIGINT"
     query = f"""
         SELECT {track_col} AS segment_id, mmsi, timestamp, lon::DOUBLE, lat::DOUBLE,
-               {time_delta_select}
+               {time_delta_select}, {stop_id_select} AS stop_id
         FROM {source}
         {tile_where}
         ORDER BY segment_id, mmsi, {TRACK_POINT_ORDER}
@@ -146,7 +149,7 @@ def _track_tile_cached(
     fill = (*rgb, round(opacity * 255))
     width = max(1, round(line_width * RENDER_SCALE))
     min_x, min_y, max_x, max_y = tile_bbox_mercator(z, x, y)
-    current_key: tuple[int, int] | None = None
+    current_key: tuple[int, int, int | None] | None = None
     path: list[tuple[float, float]] = []
     previous: tuple[int, float, float] | None = None
 
@@ -169,8 +172,8 @@ def _track_tile_cached(
             rows = cursor.fetchmany(100_000)
             if not rows:
                 break
-            for segment_id, vessel_id, timestamp, lon, lat, source_time_delta in rows:
-                key = (int(segment_id), int(vessel_id))
+            for segment_id, vessel_id, timestamp, lon, lat, source_time_delta, stop_id in rows:
+                key = (int(segment_id), int(vessel_id), stop_id)
                 if key != current_key:
                     flush()
                     current_key = key
@@ -242,13 +245,16 @@ def _tile_key(
     return (z, x, y, *_filter_key(filters), color, line_width, opacity, signature)
 
 
-def _data_signature() -> str:
+def _data_signature(behavior: str | None) -> str:
     path = active_parquet_path()
     stat = path.stat()
     manifest = read_active_manifest() or {}
     context = dataset_context.get()
     owner = context.owner_id if context else "legacy"
-    return f"{owner}:{path.resolve()}:{manifest.get('dataset_id')}:{manifest.get('data_role')}:{stat.st_size}:{stat.st_mtime_ns}"
+    coast = coastline_source() if behavior in STOP_BEHAVIORS else None
+    coastline_version = f"{coast[1]}:{STOP_BEHAVIOR_VERSION}" if coast else ""
+    return (f"{owner}:{path.resolve()}:{manifest.get('dataset_id')}:{manifest.get('data_role')}:"
+            f"{stat.st_size}:{stat.st_mtime_ns}:{coastline_version}")
 
 
 def _disk_path(key: tuple[object, ...]) -> Path:

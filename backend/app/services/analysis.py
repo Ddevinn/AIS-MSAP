@@ -5,7 +5,10 @@ from typing import Any
 
 from backend.app.config import MAX_BROWSER_TRACK_POINTS
 from backend.app.services.dataset import dataset_ready, read_active_manifest
-from backend.app.services.query import behavior_condition, behavior_feature_source, QueryFilters, analysis_source, connect, points_sql, trajectory_column
+from backend.app.services.query import (
+    QueryFilters, analysis_source, behavior_condition, behavior_feature_source, connect,
+    points_sql, stop_match_join, stop_match_relation, trajectory_column,
+)
 
 
 def require_dataset() -> None:
@@ -195,6 +198,14 @@ def behavior_distribution(filters: QueryFilters | None = None) -> list[dict[str,
     require_dataset()
     source, params = analysis_source(filters)
     feature_source = behavior_feature_source(source)
+    matches = stop_match_relation()
+    stop_query = (
+        f"SELECT stops.stop_behavior AS behavior, base.mmsi FROM features AS base "
+        f"JOIN {matches} AS stops ON {stop_match_join()}"
+        if matches else
+        f"SELECT 'berthing' AS behavior, mmsi FROM features WHERE {behavior_condition('berthing')} "
+        f"UNION ALL SELECT 'anchoring', mmsi FROM features WHERE {behavior_condition('anchoring')}"
+    )
 
     with connect() as con:
         rows = con.execute(
@@ -202,11 +213,7 @@ def behavior_distribution(filters: QueryFilters | None = None) -> list[dict[str,
             WITH features AS MATERIALIZED ({feature_source}),
             total AS (SELECT count(*)::DOUBLE AS point_count FROM features),
             recognized AS (
-                SELECT 'berthing' AS behavior, mmsi FROM features
-                WHERE {behavior_condition('berthing')}
-                UNION ALL
-                SELECT 'anchoring', mmsi FROM features
-                WHERE {behavior_condition('anchoring')}
+                {stop_query}
                 UNION ALL
                 SELECT 'turning', mmsi FROM features
                 WHERE {behavior_condition('turning')}

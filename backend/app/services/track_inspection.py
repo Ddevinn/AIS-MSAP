@@ -7,6 +7,7 @@ from backend.app.services.analysis import require_dataset
 from backend.app.services.dataset import active_dataset_id, read_active_manifest
 from backend.app.services.query import QueryFilters, connect, trajectory_column, trajectory_source
 from backend.app.services.raster_tracks import TRACK_POINT_ORDER, track_gap_limits
+from backend.app.services.stop_behavior import STOP_BEHAVIORS
 
 
 MAX_VIEW_POINTS = 4_000
@@ -35,10 +36,14 @@ def require_track_version(data_version: str) -> dict:
     return manifest
 
 
-def _paired_points(source: str, track_col: str, columns: set[str], condition: str) -> str:
+def _paired_points(
+    source: str, track_col: str, columns: set[str], condition: str, include_stop_id: bool,
+) -> str:
     source_delta = "time_delta_seconds" if "time_delta_seconds" in columns else "NULL::BIGINT"
+    stop_id = "behavior_stop_id" if include_stop_id else "NULL::BIGINT"
     return f"""
         SELECT *, {source_delta} AS inspect_source_delta,
+               {stop_id} AS inspect_stop_id, lag({stop_id}) OVER track_order AS inspect_prev_stop_id,
                lag(timestamp) OVER track_order AS inspect_prev_time,
                lag(lon::DOUBLE) OVER track_order AS inspect_prev_lon,
                lag(lat::DOUBLE) OVER track_order AS inspect_prev_lat
@@ -54,6 +59,7 @@ def _track_link(manifest: dict) -> str:
     delta = "(timestamp - inspect_prev_time)"
     return f"""
         inspect_prev_time IS NOT NULL
+        AND inspect_stop_id IS NOT DISTINCT FROM inspect_prev_stop_id
         AND (inspect_source_delta IS NULL OR {delta} = inspect_source_delta)
         AND {delta} <= {max_gap}
         AND 60 * sqrt(
@@ -77,13 +83,14 @@ def viewport_track_points(
     manifest = require_track_version(data_version)
     track_col = trajectory_column()
     columns = set(manifest.get("columns", []))
-    source, params = trajectory_source(filters)
+    include_stop_id = filters.behavior in STOP_BEHAVIORS
+    source, params = trajectory_source(filters, include_stop_id=include_stop_id)
     max_distance, _ = track_gap_limits(manifest)
     lat_pad = max_distance / 60
     lon_pad = lat_pad / max(0.1, cos(radians(max(abs(south), abs(north)))))
     pairs = _paired_points(source, track_col, columns, """
         lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?
-    """)
+    """, include_stop_id)
     heading = "heading::DOUBLE" if "heading" in columns else "NULL::DOUBLE"
     with connect() as con:
         rows = con.execute(f"""
@@ -124,8 +131,10 @@ def selected_track_source(filters: QueryFilters, anchor: TrackAnchor) -> tuple[s
     columns = set(manifest.get("columns", []))
     if filters.mmsi is not None and filters.mmsi != anchor.vessel_id:
         raise RuntimeError("选中船舶与当前筛选条件不一致。")
-    source, params = trajectory_source(replace(filters, mmsi=anchor.vessel_id))
-    pairs = _paired_points(source, track_col, columns, f"mmsi = ? AND {track_col} = ?")
+    include_stop_id = filters.behavior in STOP_BEHAVIORS
+    source, params = trajectory_source(replace(filters, mmsi=anchor.vessel_id), include_stop_id=include_stop_id)
+    pairs = _paired_points(source, track_col, columns, f"mmsi = ? AND {track_col} = ?", include_stop_id)
+    stop_column = ", behavior_stop_id" if include_stop_id else ""
     sql = f"""
         (
             WITH pairs AS ({pairs}), numbered AS (
@@ -133,7 +142,8 @@ def selected_track_source(filters: QueryFilters, anchor: TrackAnchor) -> tuple[s
                     OVER (ORDER BY {TRACK_POINT_ORDER} ROWS UNBOUNDED PRECEDING) AS inspect_run
                 FROM pairs
             )
-            SELECT * EXCLUDE (inspect_source_delta, inspect_prev_time, inspect_prev_lon, inspect_prev_lat, inspect_run)
+            SELECT * EXCLUDE (inspect_source_delta, inspect_stop_id, inspect_prev_stop_id,
+                              inspect_prev_time, inspect_prev_lon, inspect_prev_lat, inspect_run{stop_column})
             FROM numbered
             WHERE inspect_run = (
                 SELECT inspect_run FROM numbered WHERE timestamp = ? AND lon::DOUBLE = ? AND lat::DOUBLE = ?

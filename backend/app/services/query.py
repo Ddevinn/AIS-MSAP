@@ -8,7 +8,9 @@ from typing import Any
 
 import duckdb
 
+from backend.app.services.coastline import coastline_source
 from backend.app.services.dataset import active_parquet_path, read_active_manifest
+from backend.app.services.stop_behavior import STOP_BEHAVIORS, stop_matches
 
 
 @dataclass
@@ -171,7 +173,7 @@ def analysis_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
     return f"(SELECT * FROM {points_sql()} {where}) AS filtered_points", params
 
 
-def trajectory_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
+def trajectory_source(filters: QueryFilters | None, *, include_stop_id: bool = False) -> tuple[str, list[Any]]:
     """Return points to draw as tracks for the current filter.
 
     A section selects every point belonging to a crossing trajectory so the
@@ -182,8 +184,39 @@ def trajectory_source(filters: QueryFilters | None) -> tuple[str, list[Any]]:
     else:
         source, params = analysis_source(filters)
     if filters and filters.behavior:
-        source = _behavior_segment_source(source, filters.behavior)
+        behavior = filters.behavior
+        matches = stop_match_relation() if behavior in STOP_BEHAVIORS else None
+        if matches:
+            source = stop_behavior_source(source, matches, behavior, include_stop_id=include_stop_id)
+        else:
+            source = _behavior_segment_source(source, behavior)
+            if include_stop_id and behavior in STOP_BEHAVIORS:
+                source = f"(SELECT *, NULL::BIGINT AS behavior_stop_id FROM {source}) AS legacy_stops"
     return source, params
+
+
+def stop_behavior_source(source: str, matches: str, behavior: str, *, include_stop_id: bool = False) -> str:
+    stop_id = ", stops.stop_id AS behavior_stop_id" if include_stop_id else ""
+    return f"""(
+        SELECT base.*{stop_id}
+        FROM (SELECT * FROM {source}) AS base
+        JOIN {matches} AS stops ON {stop_match_join()}
+        WHERE stops.stop_behavior = '{behavior}'
+    ) AS stop_segments"""
+
+
+def stop_match_relation() -> str | None:
+    coast = coastline_source()
+    if coast is None:
+        return None
+    result = stop_matches(active_parquet_path(), points_sql(), trajectory_column(), coast)
+    escaped = result.as_posix().replace("'", "''")
+    return f"read_parquet('{escaped}')"
+
+def stop_match_join() -> str:
+    return (f"base.mmsi = stops.mmsi AND base.{trajectory_column()} = stops.track_id "
+            "AND base.timestamp = stops.timestamp AND base.lon::DOUBLE = stops.lon "
+            "AND base.lat::DOUBLE = stops.lat")
 
 
 def normalize_behavior(behavior: str | None) -> str | None:
